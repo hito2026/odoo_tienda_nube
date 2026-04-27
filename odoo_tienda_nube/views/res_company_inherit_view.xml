@@ -11,6 +11,7 @@
                         <group>
                             <field name="tiendanube_id" />
                             <field name="tiendanube_access_token" />
+                            <button name="action_test_connection_tn" type="object" string="🔗 Probar Conexión" class="oe_highlight"/>
                             <field name="tn_config_confirmation_sale"/>
                             <field name="tn_config_stock"/>
                             <field name="tn_config_stock_realtime"/>

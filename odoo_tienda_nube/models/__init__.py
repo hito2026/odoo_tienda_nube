@@ -11,3 +11,4 @@ from . import coupon_tn
 from . import stock_move_line_inherit
 from . import stock_warehouse_inherit
 from . import product_template_image_tn
+from . import test_connection_tn_wizard
