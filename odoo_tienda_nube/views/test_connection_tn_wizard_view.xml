@@ -5,14 +5,13 @@
         <field name="model">test.connection.tn.wizard</field>
         <field name="arch" type="xml">
             <form>
-                <div class="alert" attrs="{'alert-success': success, 'alert-danger': not success}">
-                    <p>
-                        <b attrs="{'invisible': not success}">✓ Conexión Exitosa</b>
-                        <b attrs="{'invisible': success}">✗ Error de Conexión</b>
-                    </p>
-                    <p>
-                        <field name="message" nolabel="1" />
-                    </p>
+                <div class="alert alert-success" invisible="not success">
+                    <b>✓ Conexión Exitosa</b>
+                    <p><field name="message" nolabel="1" /></p>
+                </div>
+                <div class="alert alert-danger" invisible="success">
+                    <b>✗ Error de Conexión</b>
+                    <p><field name="message" nolabel="1" /></p>
                 </div>
                 <footer>
                     <button string="Cerrar" class="btn-secondary" special="cancel" />
