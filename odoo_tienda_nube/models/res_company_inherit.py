@@ -111,10 +111,16 @@ class TiendaNubeResCompanyInherit(models.Model):
         return products
 
     def get_headers_tn(self):
+        if not self.tiendanube_access_token or not isinstance(self.tiendanube_access_token, str):
+            raise ValidationError(_('El token de acceso de Tienda Nube no está configurado o es inválido. Por favor, configure el token en la empresa.'))
+        # Construir User-Agent según especificación de Tienda Nube API
+        user_agent = "Odoo Hitofusion"
+        if self.email:
+            user_agent += " (%s)" % self.email
         return {
             "Authentication": "bearer " + self.tiendanube_access_token,
             "Content-Type": "application/json",
-            "User-Agent": "Odoo by Devoo"
+            "User-Agent": user_agent
         }
 
     #Creamos productos de TN en Odoo
