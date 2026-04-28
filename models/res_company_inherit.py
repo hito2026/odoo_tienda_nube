@@ -111,10 +111,20 @@ class TiendaNubeResCompanyInherit(models.Model):
         return products
 
     def get_headers_tn(self):
+        if not self.tiendanube_access_token:
+            _logger.error('Token de Tienda Nube no configurado para la empresa %s', self.name)
+            raise ValidationError(_('El token de acceso de Tienda Nube no está configurado. Por favor, configure el token en la empresa.'))
+
+        if not isinstance(self.tiendanube_access_token, str):
+            _logger.error('Token de Tienda Nube inválido (tipo %s) para la empresa %s', type(self.tiendanube_access_token), self.name)
+            raise ValidationError(_('El token de acceso de Tienda Nube es inválido. Por favor, revise la configuración.'))
+
+        user_agent = "Odoo Hitofusion (soporte@hitofusion.com)"
+
         return {
-            "Authentication": "bearer " + self.tiendanube_access_token,
+            "Authentication": "bearer " + self.tiendanube_access_token.strip(),
             "Content-Type": "application/json",
-            "User-Agent": "Odoo by Devoo"
+            "User-Agent": user_agent
         }
 
     #Creamos productos de TN en Odoo
@@ -731,6 +741,93 @@ class TiendaNubeResCompanyInherit(models.Model):
                 error_tn=response.text,
             )
             raise ValidationError('Error al obtener ordenes de Tienda Nube: %s' % response.text)
+
+    def action_test_connection_tn(self):
+        result = self.test_connection_tn()
+
+        wizard = self.env['test.connection.tn.wizard'].create({
+            'success': result['success'],
+            'message': result['message'],
+        })
+
+        return {
+            'type': 'ir.actions.act_window',
+            'res_model': 'test.connection.tn.wizard',
+            'view_mode': 'form',
+            'res_id': wizard.id,
+            'target': 'new',
+        }
+
+    def test_connection_tn(self):
+        try:
+            if not self.tiendanube_id:
+                message = 'ID de Tienda Nube no configurado'
+                _logger.warning(message)
+                return {
+                    'success': False,
+                    'message': message,
+                }
+
+            headers = self.get_headers_tn()
+            _logger.info('Probando conexión con Tienda Nube para empresa %s (ID: %s)', self.name, self.tiendanube_id)
+
+            url = "https://api.tiendanube.com/v1/%s/categories" % self.tiendanube_id
+            response = requests.get(url, headers=headers, timeout=10)
+
+            if response.status_code == 200:
+                _logger.info('Conexión exitosa con Tienda Nube para empresa %s', self.name)
+                return {
+                    'success': True,
+                    'message': 'Conexión exitosa con Tienda Nube API',
+                }
+            elif response.status_code == 401:
+                message = 'Token de acceso inválido o expirado. Respuesta: %s' % response.text
+                _logger.error(message)
+                return {
+                    'success': False,
+                    'message': message,
+                }
+            elif response.status_code == 404:
+                message = 'ID de Tienda Nube no válido (404). Respuesta: %s' % response.text
+                _logger.error(message)
+                return {
+                    'success': False,
+                    'message': message,
+                }
+            else:
+                message = 'Error en la conexión (HTTP %s). Respuesta: %s' % (response.status_code, response.text)
+                _logger.error(message)
+                return {
+                    'success': False,
+                    'message': message,
+                }
+        except requests.exceptions.Timeout:
+            message = 'La conexión a Tienda Nube tardó demasiado (timeout)'
+            _logger.error(message)
+            return {
+                'success': False,
+                'message': message,
+            }
+        except requests.exceptions.ConnectionError as e:
+            message = 'Error de conexión a Tienda Nube: %s' % str(e)
+            _logger.error(message)
+            return {
+                'success': False,
+                'message': message,
+            }
+        except ValidationError as e:
+            _logger.error('Error de validación en prueba de conexión: %s', str(e))
+            return {
+                'success': False,
+                'message': str(e),
+            }
+        except Exception as e:
+            message = 'Error inesperado: %s' % str(e)
+            _logger.error(message)
+            return {
+                'success': False,
+                'message': message,
+            }
 
     # Metodo para traer Almacenes y Ubicaciones de Tienda Nube a Odoo
     def get_location_tn(self):

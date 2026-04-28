@@ -14,38 +14,43 @@
                     <button name="create_tn" string="Crear en Tienda Nube" type="object" class="oe_highlight"  invisible="id_tn != False"/>
                 </header>
 
-                <field name="categ_id" position="after">
-                    <field name="categoria_tn_ids" domain="[('tn_id', '!=', False)]" options="{'no_create': True, 'no_create_edit':True}" widget="many2many_tags"/>
-                    <field name="id_tn" readonly="1"/>
-                    <field name="canonical_url" readonly="1" widget="url"/>
-                    <field name="envio_gratis_tn"/>
-                    <field name="mostrar_en_tienda_tn"/>
-                    <field name="stock_ilimitado_tn" invisible="product_variant_count > 1"/>
-                    <field name="precio_promocional_tn" invisible="product_variant_count > 1"/>
-                    <field name="alto_tn" invisible="product_variant_count > 1"/>
-                    <field name="ancho_tn" invisible="product_variant_count > 1"/>
-                    <field name="profundidad_tn" invisible="product_variant_count > 1"/>
-                    <field name="peso_tn" invisible="product_variant_count > 1"/>
-                    <field name="mpn_tn" invisible="product_variant_count > 1"/>
-                    <field name="rango_edad_tn" invisible="product_variant_count > 1"/>
-                    <field name="sexo_tn" invisible="product_variant_count > 1"/>
-                    <field name="contemplar_imagen_variantes_tn" invisible="product_variant_count > 1"/>
-                </field>
-
-                <xpath expr="//page[@name='sales']/group[@name='sale']" position="inside">
-                    <group colspan="2" name="product_template_images_tn" string="Galeria de Tienda Nube">
-                        <field
-                            colspan="2"
-                            name="product_template_image_tn_ids"
-                            class="o_website_tn_image_list"
-                            context="{'default_name': name}"
-                            mode="kanban"
-                            add-label="Agregar Imagen"
-                            nolabel="1"
-                            widget="x2_many_media_viewer"
-                            options="{'convert_to_webp': True}"
-                        />
-                    </group>
+                <xpath expr="//page[@name='inventory']" position="after">
+                    <page name="tienda_nube_inventory" string="Tienda Nube">
+                        <group>
+                            <group>
+                                <field name="categoria_tn_ids" domain="[('tn_id', '!=', False)]" options="{'no_create': True, 'no_create_edit':True}" widget="many2many_tags"/>
+                                <field name="id_tn" readonly="1"/>
+                                <field name="canonical_url" readonly="1" widget="url"/>
+                                <field name="envio_gratis_tn"/>
+                                <field name="mostrar_en_tienda_tn"/>
+                                <field name="contemplar_imagen_variantes_tn" invisible="product_variant_count > 1"/>
+                            </group>
+                            <group>
+                                <field name="stock_ilimitado_tn" invisible="product_variant_count > 1"/>
+                                <field name="precio_promocional_tn" invisible="product_variant_count > 1"/>
+                                <field name="alto_tn" invisible="product_variant_count > 1"/>
+                                <field name="ancho_tn" invisible="product_variant_count > 1"/>
+                                <field name="profundidad_tn" invisible="product_variant_count > 1"/>
+                                <field name="peso_tn" invisible="product_variant_count > 1"/>
+                                <field name="mpn_tn" invisible="product_variant_count > 1"/>
+                                <field name="rango_edad_tn" invisible="product_variant_count > 1"/>
+                                <field name="sexo_tn" invisible="product_variant_count > 1"/>
+                            </group>
+                        </group>
+                        <group colspan="2" name="product_template_images_tn" string="Galeria de Tienda Nube">
+                            <field
+                                colspan="2"
+                                name="product_template_image_tn_ids"
+                                class="o_website_tn_image_list"
+                                context="{'default_name': name}"
+                                mode="kanban"
+                                add-label="Agregar Imagen"
+                                nolabel="1"
+                                widget="x2_many_media_viewer"
+                                options="{'convert_to_webp': True}"
+                            />
+                        </group>
+                    </page>
                 </xpath>
                 
             </field>
