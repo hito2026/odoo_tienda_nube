@@ -5,6 +5,7 @@
         <field name="model">test.connection.tn.wizard</field>
         <field name="arch" type="xml">
             <form>
+                <field name="success" invisible="1"/>
                 <div class="alert alert-success" invisible="not success">
                     <b>✓ Conexión Exitosa</b>
                     <p><field name="message" nolabel="1" /></p>
