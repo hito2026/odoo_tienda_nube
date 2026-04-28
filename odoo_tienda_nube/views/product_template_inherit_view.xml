@@ -14,22 +14,6 @@
                     <button name="create_tn" string="Crear en Tienda Nube" type="object" class="oe_highlight" invisible="id_tn != False"/>
                 </header>
 
-                <xpath expr="//page[@name='sales']/group[@name='sale']" position="inside">
-                    <group colspan="2" name="product_template_images_tn" string="Galeria de Tienda Nube">
-                        <field
-                                colspan="2"
-                                name="product_template_image_tn_ids"
-                                class="o_website_tn_image_list"
-                                context="{'default_name': name}"
-                                mode="kanban"
-                                add-label="Agregar Imagen"
-                                nolabel="1"
-                                widget="x2_many_media_viewer"
-                                options="{'convert_to_webp': True}"
-                        />
-                    </group>
-                </xpath>
-
                 <xpath expr="//page[@name='inventory']" position="after">
                     <page name="tienda_nube_inventory" string="Tienda Nube">
                         <group>
@@ -53,6 +37,19 @@
                                 <field name="rango_edad_tn" invisible="product_variant_count > 1"/>
                                 <field name="sexo_tn" invisible="product_variant_count > 1"/>
                             </group>
+                        </group>
+                        <group colspan="2" name="product_template_images_tn" string="Galeria de Tienda Nube">
+                            <field
+                                    colspan="2"
+                                    name="product_template_image_tn_ids"
+                                    class="o_website_tn_image_list"
+                                    context="{'default_name': name}"
+                                    mode="kanban"
+                                    add-label="Agregar Imagen"
+                                    nolabel="1"
+                                    widget="x2_many_media_viewer"
+                                    options="{'convert_to_webp': True}"
+                            />
                         </group>
                     </page>
                 </xpath>
