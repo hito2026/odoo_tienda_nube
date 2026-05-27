@@ -310,7 +310,7 @@ class SaleOrderTiendaNubeInherit(models.Model):
                 
                 #Verificamos si tenemos que quitar impuestos
                 price_shipping = float(order['shipping_cost_customer'])
-                if self.company_id.tn_type_tax == 'not_included':
+                if self.company_id.tn_type_tax == 'not_included' and price_shipping > 0:
                     value_tax = (((product_shipping_tn.taxes_id.compute_all(price_shipping)['total_included']) * 100) / (product_shipping_tn.taxes_id.compute_all(price_shipping)['total_excluded'])) / 100
                     price_shipping = price_shipping / value_tax
 
