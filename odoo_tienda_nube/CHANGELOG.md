@@ -1,5 +1,12 @@
 # Changelog — Tienda Nube ⇆ Odoo Connector
 
+## [18.0.7.0.6] - 2026-05-28
+
+### Fixed
+
+- En el wizard de sincronización masiva por código de barras/SKU, `variant_tn_id` ahora se completa siempre con el ID de variante de Tienda Nube (`variant.id`), evitando guardar el ID de producto/template en publicaciones de una sola variante.
+- En la importación de órdenes desde Tienda Nube, se agrega un fallback de resolución de producto: si no existe coincidencia por `product.product.product_id_tn` y el `product.template.id_tn` está mapeado con una sola variante en Odoo, se usa esa variante automáticamente y se completa `product_id_tn` con el `variant_id` recibido.
+
 ## [18.0.7.0.5] - 2026-04-22
 
 ### Added

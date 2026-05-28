@@ -59,6 +59,28 @@ class SaleOrderTiendaNubeInherit(models.Model):
 
     json_tn = fields.Text('JSON Tienda Nube', help="JSON de Tienda Nube", copy=False)
 
+    def _resolve_product_from_tn_line(self, line):
+        """Resolve TN line product with safe fallbacks for single-variant templates."""
+        variant_id = str(line.get('variant_id') or '')
+        if variant_id:
+            product = self.env['product.product'].search([('product_id_tn', '=', variant_id)], limit=1)
+            if product:
+                return product
+
+        # Fallback: if template is mapped and has a single variant, use it and backfill product_id_tn.
+        product_tn_id = line.get('product_id')
+        if product_tn_id:
+            template = self.env['product.template'].search([('id_tn', '=', str(product_tn_id))], limit=1)
+            if template:
+                variants = template.with_context(active_test=False).product_variant_ids
+                if len(variants) == 1:
+                    product = variants[0]
+                    if variant_id and not product.product_id_tn:
+                        product.product_id_tn = variant_id
+                    return product
+
+        return self.env['product.product']
+
     # Metodo para crear la orden en Odoo desde TN GET /orders/{id}
     def create_order_from_tn(self):
         if self.state != 'draft':
@@ -200,10 +222,9 @@ class SaleOrderTiendaNubeInherit(models.Model):
                 
                 # Completamos lineas de la orden
                 for line in order['products']:
-                    product = self.env['product.product'].search([('product_id_tn', '=', line['variant_id'])], limit=1)
+                    product = self._resolve_product_from_tn_line(line)
                     
                     if not product:
-                        self.env.cr.rollback()
                         raise ValidationError(_("Producto '{0}' con codigo '{1}' en Tienda Nuve no encontrado en Odoo".format(line['name'], line['variant_id'])))
                     #Verificamos si tenemos que quitar impuestos
                     price_unit = float(line['price'])

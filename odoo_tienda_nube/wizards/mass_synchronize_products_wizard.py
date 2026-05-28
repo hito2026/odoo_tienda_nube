@@ -41,7 +41,7 @@ class MassSynchronizeProductsWizard(models.TransientModel):
                             line = {
                                 'product_id': product_tmp.id,
                                 'tn_id': str(product['id']),
-                                'variant_tn_id': str(variant['id']) if len(product['variants']) > 1 else str(product['id']),
+                                'variant_tn_id': str(variant['id']),
                                 'product_tn_name': product['name']['es'] + " SKU: " + variant['barcode'] if 'name' in product else '',
                             }
                             lines.append((0, 0, line))
