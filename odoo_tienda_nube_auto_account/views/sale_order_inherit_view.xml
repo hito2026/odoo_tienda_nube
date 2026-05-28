@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<odoo>
+    <record id="view_sale_order_tn_auto_account_inherit" model="ir.ui.view">
+        <field name="name">sale.order.tn.auto.account.inherit</field>
+        <field name="model">sale.order</field>
+        <field name="inherit_id" ref="odoo_tienda_nube.view_sale_order_tienda_nube_inherit"/>
+        <field name="arch" type="xml">
+            <xpath expr="//page[@name='tienda_nube_page']/group[1]" position="after">
+                <group string="Pagos Tienda Nube">
+                    <group>
+                        <field name="payment_status_tn" readonly="1"/>
+                        <field name="payment_method_tn" readonly="1"/>
+                        <field name="gateway_tn" readonly="1"/>
+                    </group>
+                    <group>
+                        <field name="payment_date_tn" readonly="1"/>
+                        <field name="payment_id_tn" readonly="1"/>
+                    </group>
+                </group>
+            </xpath>
+        </field>
+    </record>
+</odoo>
