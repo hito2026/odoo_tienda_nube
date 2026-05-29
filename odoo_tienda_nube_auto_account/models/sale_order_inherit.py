@@ -164,40 +164,69 @@ class SaleOrderTnAutoAccount(models.Model):
                 continue
             values = order._tn_extract_payment_data(payload)
             order.write(values)
+            order._tn_ensure_payment_mapping_stub()
 
-    def _tn_get_payment_mapping(self):
+    def _tn_ensure_payment_mapping_stub(self):
         self.ensure_one()
+
         method = (self.payment_method_tn or "").strip()
         if not method:
             return False
 
-        Mapping = self.env["tn.payment.method.mapping"].sudo().with_company(self.company_id)
         gateway = (self.gateway_tn or "").strip()
+        Mapping = self.env["tn.payment.method.mapping"].sudo().with_company(self.company_id)
 
-        mapping = False
+        domain_exact = [
+            ("company_id", "=", self.company_id.id),
+            ("payment_method_tn", "=", method),
+            ("gateway_tn", "=", gateway),
+            ("active", "=", True),
+        ]
+        mapping = Mapping.search(domain_exact, limit=1)
+        if mapping:
+            return mapping
+
+        domain_fallback = [
+            ("company_id", "=", self.company_id.id),
+            ("payment_method_tn", "=", method),
+            ("gateway_tn", "=", ""),
+            ("active", "=", True),
+        ]
         if gateway:
-            mapping = Mapping.search(
-                [
-                    ("company_id", "=", self.company_id.id),
-                    ("payment_method_tn", "=", method),
-                    ("gateway_tn", "=", gateway),
-                    ("active", "=", True),
-                ],
-                limit=1,
-            )
+            mapping = Mapping.search(domain_fallback, limit=1)
+            if mapping:
+                return mapping
 
-        if not mapping:
-            mapping = Mapping.search(
-                [
-                    ("company_id", "=", self.company_id.id),
-                    ("payment_method_tn", "=", method),
-                    ("gateway_tn", "=", ""),
-                    ("active", "=", True),
-                ],
-                limit=1,
+        try:
+            mapping = Mapping.create(
+                {
+                    "company_id": self.company_id.id,
+                    "payment_method_tn": method,
+                    "gateway_tn": gateway or "",
+                    "journal_id": False,
+                }
+            )
+        except Exception:
+            mapping = Mapping.search(domain_exact, limit=1)
+            if not mapping and gateway:
+                mapping = Mapping.search(domain_fallback, limit=1)
+
+        if mapping:
+            self._tn_log(
+                level="warning",
+                title="Mapeo de pago TN creado automaticamente",
+                message=(
+                    "Se creo el mapeo para metodo '%s' y gateway '%s'. "
+                    "Debe asignar un diario para habilitar el pago automatico."
+                )
+                % (method, gateway or "*"),
             )
 
         return mapping
+
+    def _tn_get_payment_mapping(self):
+        self.ensure_one()
+        return self._tn_ensure_payment_mapping_stub()
 
     def _tn_create_invoice_if_needed(self):
         self.ensure_one()
@@ -268,6 +297,18 @@ class SaleOrderTnAutoAccount(models.Model):
                     "La factura %s se creo sin pago automatico."
                 )
                 % (self.payment_method_tn or "", self.gateway_tn or "", invoice.name or invoice.id),
+            )
+            return False
+
+        if not mapping.journal_id:
+            self._tn_log(
+                level="warning",
+                title="Mapeo TN sin diario configurado",
+                message=(
+                    "Existe mapeo para metodo '%s' y gateway '%s', "
+                    "pero falta asignar diario para crear el pago automatico."
+                )
+                % (self.payment_method_tn or "", self.gateway_tn or ""),
             )
             return False
 
