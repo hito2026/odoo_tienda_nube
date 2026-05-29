@@ -22,6 +22,13 @@ class ResCompanyTnAutoAccount(models.Model):
         ),
     )
 
+    tn_invoice_journal_id = fields.Many2one(
+        "account.journal",
+        string="Diario de Facturacion TN",
+        domain="[('type', '=', 'sale'), ('company_id', '=', id)]",
+        help="Si se configura, las facturas automaticas TN se crean con este diario.",
+    )
+
     def _compute_tn_auto_invoice_trigger(self):
         params = self.env["ir.config_parameter"].sudo()
         for company in self:
