@@ -6,7 +6,9 @@
         <field name="inherit_id" ref="odoo_tienda_nube.view_company_form_tn"/>
         <field name="arch" type="xml">
             <xpath expr="//field[@name='tn_config_confirmation_sale']" position="after">
-                <field name="tn_auto_invoice_trigger"/>
+                <separator string="Facturacion y Pagos Automaticos TN"/>
+                <field name="tn_auto_invoice_trigger" widget="radio"/>
+                <field name="tn_invoice_journal_id"/>
             </xpath>
         </field>
     </record>
