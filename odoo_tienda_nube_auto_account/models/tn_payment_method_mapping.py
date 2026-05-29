@@ -23,8 +23,9 @@ class TnPaymentMethodMapping(models.Model):
     journal_id = fields.Many2one(
         "account.journal",
         string="Diario",
-        required=True,
+        required=False,
         domain="[('type', 'in', ['bank', 'cash']), ('company_id', '=', company_id)]",
+        help="Puede dejarse vacio inicialmente. El pago automatico se habilita al asignar un diario.",
     )
 
     _sql_constraints = [
@@ -40,5 +41,5 @@ class TnPaymentMethodMapping(models.Model):
         for rec in self:
             method = rec.payment_method_tn or ""
             gateway = rec.gateway_tn or "*"
-            journal = rec.journal_id.name or ""
+            journal = rec.journal_id.name or "PENDIENTE"
             rec.display_name = f"{method} / {gateway} -> {journal}"
