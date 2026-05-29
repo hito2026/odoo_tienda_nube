@@ -29,6 +29,7 @@
     ],
     "data": [
         "security/ir.model.access.csv",
+        "views/res_company_inherit_view.xml",
         "views/tn_payment_method_mapping_views.xml",
         "views/sale_order_inherit_view.xml",
     ],
