@@ -1,4 +1,4 @@
-from odoo import fields, models
+from odoo import api, fields, models
 
 
 class TnPaymentMethodMapping(models.Model):
@@ -35,7 +35,7 @@ class TnPaymentMethodMapping(models.Model):
         )
     ]
 
-    @fields.depends("payment_method_tn", "gateway_tn", "journal_id")
+    @api.depends("payment_method_tn", "gateway_tn", "journal_id")
     def _compute_display_name(self):
         for rec in self:
             method = rec.payment_method_tn or ""
