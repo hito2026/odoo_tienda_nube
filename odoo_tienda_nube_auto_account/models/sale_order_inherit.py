@@ -287,6 +287,9 @@ class SaleOrderTnAutoAccount(models.Model):
 
         if invoice:
             if invoice.state == "draft":
+                company_journal = self.company_id.tn_invoice_journal_id
+                if company_journal and invoice.journal_id != company_journal:
+                    invoice.journal_id = company_journal
                 invoice.action_post()
             self._tn_log(
                 level="success",
