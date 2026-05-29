@@ -197,27 +197,70 @@ class SaleOrderTnAutoAccount(models.Model):
             if mapping:
                 return mapping
 
+        def _build_mapping_log(created_with_temp_journal=False):
+            if created_with_temp_journal:
+                return (
+                    "Se creo el mapeo para metodo '%s' y gateway '%s' con diario temporal '%s'. "
+                    "Revise la configuracion para asignar el diario correcto."
+                ) % (method, gateway or "*", mapping.journal_id.name)
+            return (
+                "Se creo el mapeo para metodo '%s' y gateway '%s'. "
+                "Debe asignar un diario para habilitar el pago automatico."
+            ) % (method, gateway or "*")
+
+        created_with_temp_journal = False
         try:
-            mapping = Mapping.create(
-                {
-                    "company_id": self.company_id.id,
-                    "payment_method_tn": method,
-                    "gateway_tn": gateway or "",
-                    "journal_id": False,
-                }
-            )
+            with self.env.cr.savepoint():
+                mapping = Mapping.create(
+                    {
+                        "company_id": self.company_id.id,
+                        "payment_method_tn": method,
+                        "gateway_tn": gateway or "",
+                        "journal_id": False,
+                    }
+                )
         except Exception:
-            mapping = Mapping.search(domain_exact, limit=1)
-            if not mapping and gateway:
-                mapping = Mapping.search(domain_fallback, limit=1)
+            mapping = False
+            journal = self.env["account.journal"].sudo().search(
+                [
+                    ("company_id", "=", self.company_id.id),
+                    ("type", "in", ["bank", "cash"]),
+                ],
+                limit=1,
+            )
+            if journal:
+                try:
+                    with self.env.cr.savepoint():
+                        mapping = Mapping.create(
+                            {
+                                "company_id": self.company_id.id,
+                                "payment_method_tn": method,
+                                "gateway_tn": gateway or "",
+                                "journal_id": journal.id,
+                            }
+                        )
+                        created_with_temp_journal = True
+                except Exception:
+                    mapping = False
+
+            if not mapping:
+                mapping = Mapping.search(domain_exact, limit=1)
+                if not mapping and gateway:
+                    mapping = Mapping.search(domain_fallback, limit=1)
 
         if mapping:
             self._tn_log(
                 level="warning",
                 title="Mapeo de pago TN creado automaticamente",
+                message=_build_mapping_log(created_with_temp_journal=created_with_temp_journal),
+            )
+        else:
+            self._tn_log(
+                level="warning",
+                title="No se pudo crear mapeo TN automaticamente",
                 message=(
-                    "Se creo el mapeo para metodo '%s' y gateway '%s'. "
-                    "Debe asignar un diario para habilitar el pago automatico."
+                    "No fue posible crear el mapeo para metodo '%s' y gateway '%s'. "
+                    "Configure el mapeo manualmente en Tienda Nube > Configuracion."
                 )
                 % (method, gateway or "*"),
             )
