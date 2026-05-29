@@ -1,4 +1,4 @@
-from odoo import api, fields, models
+from odoo import fields, models
 
 
 class ResCompanyTnAutoAccount(models.Model):
@@ -22,7 +22,6 @@ class ResCompanyTnAutoAccount(models.Model):
         ),
     )
 
-    @api.depends("id")
     def _compute_tn_auto_invoice_trigger(self):
         params = self.env["ir.config_parameter"].sudo()
         for company in self:
