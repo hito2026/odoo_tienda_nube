@@ -17,9 +17,9 @@
         3. Validar el picking de salida para disparar la facturacion y el cobro.
     """,
     "category": "Sale",
-    "version": "18.0.1.1.0",
+    "version": "17.0.1.1.0",
     "author": "Hitofusion",
-    "website": "https://devoo.io",
+    "website": "https://www.hitofusion.com",
     "license": "LGPL-3",
     "depends": [
         "odoo_tienda_nube",
