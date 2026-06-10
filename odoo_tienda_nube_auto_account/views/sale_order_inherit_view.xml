@@ -5,7 +5,7 @@
         <field name="model">sale.order</field>
         <field name="inherit_id" ref="odoo_tienda_nube.view_sale_order_tienda_nube_inherit"/>
         <field name="arch" type="xml">
-            <xpath expr="//page[@name='tienda_nube_page']/group[1]" position="after">
+            <xpath expr="//page[@string='Tienda Nube']/group[1]" position="after">
                 <group string="Pagos Tienda Nube">
                     <group>
                         <field name="payment_status_tn" readonly="1"/>
