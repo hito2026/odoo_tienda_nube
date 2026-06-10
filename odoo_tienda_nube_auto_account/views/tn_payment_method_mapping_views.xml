@@ -4,13 +4,13 @@
         <field name="name">tn.payment.method.mapping.list</field>
         <field name="model">tn.payment.method.mapping</field>
         <field name="arch" type="xml">
-            <list>
+            <tree>
                 <field name="active"/>
                 <field name="company_id"/>
                 <field name="payment_method_tn"/>
                 <field name="gateway_tn"/>
                 <field name="journal_id"/>
-            </list>
+            </tree>
         </field>
     </record>
 
