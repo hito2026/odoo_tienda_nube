@@ -1,5 +1,18 @@
 # Changelog — Tienda Nube ⇆ Odoo Connector
 
+## [18.0.7.0.12] - 2026-07-03
+
+### Added
+
+- Nuevo campo de compañía `tn_stock_location_ids` (Tienda Nube > pestaña Tienda Nube) para elegir explícitamente desde qué ubicaciones de Odoo se calcula la cantidad que se sincroniza a Tienda Nube, en lugar de depender únicamente del almacén vinculado al centro de distribución de TN.
+- Nueva métrica de stock "Disponible neto (a mano - reservado)" en `tn_config_stock`, calculada sobre `stock.quant` como cantidad a mano menos reservada.
+- La sincronización en tiempo real (`stock_move_line_inherit`) ahora también se dispara cuando un movimiento toca alguna de las ubicaciones configuradas en `tn_stock_location_ids`, sin importar el almacén al que pertenezcan.
+
+### Fixed
+
+- `update_product_tn` (botón "Actualizar en Tienda Nube") y `create_product_tn` (alta de producto) calculaban el stock sin contexto de almacén, enviando la cantidad total de la compañía en lugar de la del almacén vinculado a Tienda Nube. Ahora usan el mismo cálculo centralizado que el resto de los flujos.
+- Se corrige un `return` que cortaba el procesamiento de todo el lote de `stock.move.line` ante el primer movimiento sin almacén vinculado a TN; ahora se usa `continue` para no omitir el resto del lote.
+
 ## [18.0.7.0.11] - 2026-05-28
 
 ### Fixed
