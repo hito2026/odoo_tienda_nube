@@ -29,6 +29,8 @@ class stock_move_line_inherit_tn(models.Model):
                 continue
 
             company = rec.company_id
+            if company.tn_pausar_stock_tn or rec.product_id.tn_pausar_stock_producto:
+                continue
             # Si hay ubicaciones de stock TN configuradas, cualquier movimiento que toque
             # esas ubicaciones (o sus ubicaciones hijas) dispara la sincronizacion,
             # sin importar a que almacen pertenezcan.

@@ -24,9 +24,14 @@ class TiendaNubeResCompanyInherit(models.Model):
         'company_id',
         'location_id',
         string='Ubicaciones de Stock para Tienda Nube',
-        domain="[('usage', '=', 'internal'), ('company_id', 'in', (False, id))]",
+        domain="[('usage', '=', 'internal')]",
         help="Ubicaciones desde donde se calcula la cantidad que se sincroniza a Tienda Nube. "
+             "Pueden pertenecer a cualquier compañía (tenga o no cuenta de Tienda Nube configurada). "
              "Si se deja vacío, se usa el almacén vinculado al centro de distribución de Tienda Nube (comportamiento anterior).",
+    )
+    tn_pausar_stock_tn = fields.Boolean(
+        'Pausar sincronización de stock',
+        help="Si esta activo no se sincroniza stock con Tienda Nube por ningún medio (ni tiempo real ni cron cada 5 minutos).",
     )
     tn_config_confirmation_sale = fields.Boolean('Confirmar venta', help="Si esta activo se confirma la venta al crear la orden de venta, sino se deja en estado borrador")
     tn_config_stock_realtime = fields.Boolean('Stock en tiempo real', help="Si esta activo se actualiza el stock en tiempo real, sino se actualiza cada 30 minutos")
@@ -314,7 +319,9 @@ class TiendaNubeResCompanyInherit(models.Model):
             if self.tn_config_stock == 'available':
                 stock_variant = self._tn_get_net_available_qty(variant, location_ids)
             else:
-                variant_ctx = variant.with_context(location=location_ids)
+                # sudo() porque las ubicaciones seleccionadas pueden pertenecer a otra compañía
+                # sin acceso directo para el usuario/cron que dispara la sincronizacion.
+                variant_ctx = variant.sudo().with_context(location=location_ids)
                 stock_variant = variant_ctx.qty_available if self.tn_config_stock == 'stock' else variant_ctx.virtual_available
         else:
             target_warehouse = warehouse or self.env['stock.warehouse'].sudo().search([('location_id_tn', '!=', False)], limit=1)
@@ -362,7 +369,9 @@ class TiendaNubeResCompanyInherit(models.Model):
                     price_tn = variant.list_price
                 if self.tn_type_tax == 'not_included':
                     price_tn = variant.taxes_id.compute_all(price_tn)['total_included']
-                stock_variant = self._tn_compute_variant_stock(variant)
+                # No se sincroniza el stock si esta pausado a nivel compañia o a nivel producto
+                stock_paused = self.tn_pausar_stock_tn or variant.tn_pausar_stock_producto
+                stock_variant = self._tn_compute_variant_stock(variant) if not stock_paused else None
                 data = {
                     "promotional_price": variant.precio_promocional_tn if self.update_product_tn_promotional_price else None,
                     "weight": variant.peso_tn if self.update_product_tn_dimensions else None,
@@ -493,21 +502,24 @@ class TiendaNubeResCompanyInherit(models.Model):
 
     #Actualizamos stock de productos en TN con PATCH /products/stock-price
     def update_product_stock_tn(self, products, location_id_tn):
+        # Si la sincronizacion de stock esta pausada a nivel compañia, no hacemos nada
+        if self.tn_pausar_stock_tn:
+            return
         # Validamos que existan almacenes con location_id_tn
         wharehouse = self.env['stock.warehouse'].sudo().search([('location_id_tn', '!=', False)])
         if len(wharehouse) == 0:
             raise ValidationError('No hay almacenes sincronizados con Tienda Nube, por favor configure al menos un almacén con la ubicación de Tienda Nube')
-        
+
         url = "https://api.tiendanube.com/v1/%s/products/stock-price" % self.tiendanube_id
         headers = self.get_headers_tn()
-        
+
         # Preparar datos de productos
         data_products = []
         total_variants = 0
-        
+
         for product in products:
             data_variants = []
-            for variant in product.product_variant_ids.filtered(lambda x: x.product_id_tn != False):
+            for variant in product.product_variant_ids.filtered(lambda x: x.product_id_tn != False and not x.tn_pausar_stock_producto):
                 for location in location_id_tn:
                     # Obtenemos stock de la ubicacion para el producto (tn_stock_location_ids si esta
                     # configurado, sino el almacen vinculado a este centro de distribucion de TN)
@@ -524,12 +536,16 @@ class TiendaNubeResCompanyInherit(models.Model):
                         }]
                     })
             
+            if not data_variants:
+                continue
             total_variants += len(data_variants)
             data_products.append({
                 'id': int(product.id_tn),
                 'variants': data_variants
             })
-    
+
+        if not data_products:
+            return
         batches = self._split_batches(data_products, 40)
         
         for batch in batches:

@@ -9,6 +9,7 @@ class TiendaNubeProductProductInherit(models.Model):
 
     product_id_tn = fields.Char('ID Tienda Nube', help="ID Variante Tienda Nube", copy=False)
     stock_ilimitado_tn = fields.Boolean('Stock Ilimitado en Tienda Nube', help="Stock Ilimitado en Tienda Nube")
+    tn_pausar_stock_producto = fields.Boolean('Pausar sincronización de stock', help="Si esta activo este producto no sincroniza su stock con Tienda Nube (el resto de los datos del producto sigue sincronizando con normalidad)")
     precio_promocional_tn = fields.Float('Precio Promocional Tienda Nube', help="Precio promocional de Tienda Nube")
 
     #Dimensiones TN
