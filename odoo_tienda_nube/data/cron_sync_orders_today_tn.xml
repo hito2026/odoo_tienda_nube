@@ -6,8 +6,9 @@
             <field name="model_id" ref="base.model_res_company"/>
             <field name="state">code</field>
             <field name="code">
-for company in env['res.company'].search([('tiendanube_access_token', '!=', False), ('tiendanube_id', '!=', False)]):
-    company.cron_sync_orders_today_tn()
+if not env['res.company']._tn_sync_disabled():
+    for company in env['res.company'].search([('tiendanube_access_token', '!=', False), ('tiendanube_id', '!=', False)]):
+        company.cron_sync_orders_today_tn()
             </field>
             <field name="interval_number">2</field>
             <field name="interval_type">hours</field>

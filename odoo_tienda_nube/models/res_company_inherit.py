@@ -126,7 +126,17 @@ class TiendaNubeResCompanyInherit(models.Model):
                 raise ValidationError('Error al obtener productos de Tienda Nube: %s' % response.text)
         return products
 
+    def _tn_sync_disabled(self):
+        """True si la base esta neutralizada (duplicado de pruebas de Odoo.sh), en cuyo caso
+        no debe hacerse ninguna sincronizacion real con Tienda Nube."""
+        val = self.env['ir.config_parameter'].sudo().get_param('database.is_neutralized', 'False')
+        return str(val).strip().lower() in ('true', '1', 'yes')
+
     def get_headers_tn(self):
+        if self._tn_sync_disabled():
+            _logger.info('Sincronizacion con Tienda Nube omitida: base de datos neutralizada.')
+            raise ValidationError(_('Sincronización con Tienda Nube deshabilitada: la base de datos está neutralizada.'))
+
         if not self.tiendanube_access_token:
             _logger.error('Token de Tienda Nube no configurado para la empresa %s', self.name)
             raise ValidationError(_('El token de acceso de Tienda Nube no está configurado. Por favor, configure el token en la empresa.'))

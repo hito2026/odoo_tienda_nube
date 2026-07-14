@@ -24,6 +24,8 @@ class stock_move_line_inherit_tn(models.Model):
         return records
 
     def actualizar_stock_tn(self):
+        if self.env['res.company']._tn_sync_disabled():
+            return
         for rec in self:
             if not rec.product_id.product_id_tn:
                 continue
