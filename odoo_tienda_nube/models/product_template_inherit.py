@@ -16,6 +16,7 @@ class TiendaNubeProductTemplateInherit(models.Model):
     canonical_url = fields.Char('URL Publica', help="URL Publica del producto en Tienda Nube")
     #Campos de variables
     stock_ilimitado_tn = fields.Boolean('Stock Ilimitado en Tienda Nube', help="Stock Ilimitado en Tienda Nube", compute='_compute_stock_ilimitado_tn', inverse='_set_stock_ilimitado_tn')
+    tn_pausar_stock_producto = fields.Boolean('Pausar sincronización de stock', help="Si esta activo este producto no sincroniza su stock con Tienda Nube (el resto de los datos del producto sigue sincronizando con normalidad)", compute='_compute_tn_pausar_stock_producto', inverse='_set_tn_pausar_stock_producto')
     precio_promocional_tn = fields.Float('Precio Promocional Tienda Nube', help="Precio promocional de Tienda Nube", compute='_compute_precio_promocional_tn', inverse='_set_precio_promocional_tn')
     #Dimensiones TN
     alto_tn = fields.Float('Alto en CM', help="Alto en Tienda Nube", compute='_compute_alto_tn', inverse='_set_alto_tn')
@@ -58,6 +59,26 @@ class TiendaNubeProductTemplateInherit(models.Model):
             archived_variants = self.with_context(active_test=False).product_variant_ids
             if len(archived_variants) == 1:
                 archived_variants.stock_ilimitado_tn = self.stock_ilimitado_tn
+    # tn_pausar_stock_producto
+    @api.depends('product_variant_ids.tn_pausar_stock_producto')
+    def _compute_tn_pausar_stock_producto(self):
+        self.tn_pausar_stock_producto = False
+        for template in self:
+            variant_count = len(template.product_variant_ids)
+            if variant_count == 1:
+                template.tn_pausar_stock_producto = template.product_variant_ids.tn_pausar_stock_producto
+            elif variant_count == 0:
+                archived_variants = template.with_context(active_test=False).product_variant_ids
+                if len(archived_variants) == 1:
+                    template.tn_pausar_stock_producto = archived_variants.tn_pausar_stock_producto
+    def _set_tn_pausar_stock_producto(self):
+        variant_count = len(self.product_variant_ids)
+        if variant_count == 1:
+            self.product_variant_ids.tn_pausar_stock_producto = self.tn_pausar_stock_producto
+        elif variant_count == 0:
+            archived_variants = self.with_context(active_test=False).product_variant_ids
+            if len(archived_variants) == 1:
+                archived_variants.tn_pausar_stock_producto = self.tn_pausar_stock_producto
     # precio_promocional_tn
     @api.depends('product_variant_ids.precio_promocional_tn')
     def _compute_precio_promocional_tn(self):

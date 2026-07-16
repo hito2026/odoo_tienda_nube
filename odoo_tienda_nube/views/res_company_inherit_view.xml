@@ -13,7 +13,9 @@
                             <field name="tiendanube_access_token" />
                             <field name="tn_config_confirmation_sale"/>
                             <field name="tn_config_stock"/>
-                            <field name="tn_config_stock_realtime"/>
+                            <field name="tn_stock_location_ids" widget="many2many_tags"/>
+                            <field name="tn_config_stock_realtime" invisible="tn_pausar_stock_tn"/>
+                            <field name="tn_pausar_stock_tn" invisible="tn_config_stock_realtime"/>
                             <field name="tn_pricelist_id" options="{'no_create': True, 'no_create_edit': True}"/>
                             <field name="tn_config_update_product_price_cron"/>
                             <field name="tn_type_tax"/>
