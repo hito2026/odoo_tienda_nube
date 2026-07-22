@@ -11,10 +11,15 @@
             <field name="active" eval="True"/>
             <field name="user_id" ref="base.user_root"/>
             <field name="code">
-companies = model.search([('tiendanube_access_token','!=',False)])
+if model._tn_sync_disabled():
+  companies = model.browse()
+else:
+  companies = model.search([('tiendanube_access_token','!=',False)])
 for company in companies:
+  if company.tn_pausar_stock_tn:
+    continue
   if not company.tn_config_stock_realtime:
-    products = env['product.product'].search([('product_id_tn', '!=', False)])
+    products = env['product.product'].search([('product_id_tn', '!=', False), ('tn_pausar_stock_producto', '=', False)])
     #Obtenemos los almacenes de la compañia que tenga location_id_tn
     warehouses = env['stock.warehouse'].search([('location_id_tn', '!=', False)])
     location_id_tn = []

@@ -28,7 +28,14 @@ class TiendaNubeWebHook(http.Controller):
     @http.route('/webhook_tn/<string:code_event>', auth='public', cors=CORS, csrf=False)
     def TiendaNubeWebHook(self, **kw):
 
-        
+        # Base neutralizada (duplicado de pruebas): no procesamos webhooks de Tienda Nube
+        if request.env['res.company'].sudo()._tn_sync_disabled():
+            return request.make_response(
+                json.dumps({"mensaje": "Sincronización deshabilitada: base de datos neutralizada"}),
+                headers={'Content-Type': 'application/json'},
+                status=200
+            )
+
         # Verificación de locking
         lock_name = 'webhook_processing'
         if request.env['ir.config_parameter'].sudo().get_param(lock_name) == 'En uso':
