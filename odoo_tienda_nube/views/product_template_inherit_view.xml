@@ -27,6 +27,7 @@
                             </group>
                             <group>
                                 <field name="stock_ilimitado_tn" invisible="product_variant_count > 1"/>
+                                <field name="tn_pausar_stock_producto" invisible="product_variant_count > 1"/>
                                 <field name="precio_promocional_tn" invisible="product_variant_count > 1"/>
                                 <field name="alto_tn" invisible="product_variant_count > 1"/>
                                 <field name="ancho_tn" invisible="product_variant_count > 1"/>
