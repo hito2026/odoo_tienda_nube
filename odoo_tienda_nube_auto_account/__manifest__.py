@@ -17,7 +17,7 @@
         3. Validar el picking de salida para disparar la facturacion y el cobro.
     """,
     "category": "Sale",
-    "version": "17.0.1.1.0",
+    "version": "17.0.1.1.1",
     "author": "Hitofusion",
     "website": "https://www.hitofusion.com",
     "license": "LGPL-3",

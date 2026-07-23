@@ -7,7 +7,7 @@
             <field name="inherit_id" ref="sale.view_order_form"/>
             <field name="arch" type="xml">
                 <notebook position="inside">
-                    <page string="Tienda Nube">
+                    <page string="Tienda Nube" name="tienda_nube_page">
                         <button name="create_order_from_tn" string="Crear / Actualizar orden desde Tienda Nube" type="object" class="oe_highlight" invisible="state != 'draft'"/>
                         <group>
                             <group string="Datos Principales">
