@@ -29,7 +29,15 @@
         <field name="context">{'create': False}</field>
     </record>
 
-     <!-- Productos --> 
+     <!-- Ventas -->
+    <record id="action_open_sales_tn" model="ir.actions.act_window">
+        <field name="name">Ventas de TN</field>
+        <field name="res_model">sale.order</field>
+        <field name="view_mode">list,form</field>
+        <field name="domain">[('id_tn', '!=', False)]</field>
+    </record>
+
+     <!-- Productos -->
     <record id="action_open_products_tn" model="ir.actions.act_window">
         <field name="name">Productos de TN</field>
         <field name="res_model">product.template</field>
@@ -121,6 +129,7 @@
     
     <!-- Menu y Menus principales -->
     <menuitem id="menu_tn" name="Tienda Nube" web_icon="odoo_tienda_nube,static/description/icon.png" groups="odoo_tienda_nube.group_tienda_nube_user"/>
+    <menuitem id="menu_sales_tn" name="Ventas" parent="menu_tn" sequence="0" action="action_open_sales_tn"/>
     <menuitem id="menu_products_tn" name="Productos" parent="menu_tn" sequence="1" action="action_open_products_tn"/>
     <menuitem id="menu_category_tn" name="Categorias" parent="menu_tn" sequence="2" action="action_open_category_tn"/>
     <!-- Configuraciones -->
