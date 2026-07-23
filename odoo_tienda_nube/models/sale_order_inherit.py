@@ -1,8 +1,9 @@
 import logging
 import requests
 import base64
-                
+
 from datetime import datetime
+from psycopg2 import IntegrityError
 from odoo import _, api, fields, models
 from odoo.exceptions import ValidationError
 
@@ -10,6 +11,10 @@ _logger = logging.getLogger(__name__)
 
 class SaleOrderTiendaNubeInherit(models.Model):
     _inherit = "sale.order"
+
+    _sql_constraints = [
+        ('id_tn_uniq', 'unique(id_tn)', 'Ya existe una orden de venta vinculada a este ID de Tienda Nube.'),
+    ]
 
     id_tn = fields.Char('ID Tienda Nube', help="ID de Tienda Nube", copy=False)
     number_tn = fields.Char('Numero de orden', help="Numero de orden de Tienda Nube", copy=False)
@@ -80,6 +85,26 @@ class SaleOrderTiendaNubeInherit(models.Model):
                     return product
 
         return self.env['product.product']
+
+    @api.model
+    def _tn_find_or_create(self, id_tn):
+        """Busca la sale.order vinculada a este id_tn de Tienda Nube; si no existe la crea.
+        Si dos procesos (webhook, cron, wizard) intentan crearla al mismo tiempo, el
+        constraint unico de id_tn_uniq hace fallar la segunda insercion en vez de dejar
+        dos ordenes duplicadas - en ese caso recuperamos el registro que gano la carrera."""
+        order = self.sudo().search([('id_tn', '=', id_tn)], limit=1)
+        if order:
+            return order
+        try:
+            with self.env.cr.savepoint():
+                order = self.sudo().create({
+                    'id_tn': id_tn,
+                    'partner_id': self.env.ref('base.public_partner').id,
+                    'name': 'Orden TN id: ' + str(id_tn),
+                })
+        except IntegrityError:
+            order = self.sudo().search([('id_tn', '=', id_tn)], limit=1)
+        return order
 
     # Metodo para crear la orden en Odoo desde TN GET /orders/{id}
     def create_order_from_tn(self):
