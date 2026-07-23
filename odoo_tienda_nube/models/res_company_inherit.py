@@ -796,12 +796,9 @@ class TiendaNubeResCompanyInherit(models.Model):
             data = response.json()
             # Segun respuesta crearmos ordenes en nuestro modelo sale.order
             for order in data:
-                order_odoo = self.env['sale.order'].search([('id_tn', '=', order['id'])])
-                if not order_odoo:
-                    order_odoo = self.env['sale.order'].create({
-                        'id_tn': order['id'],
-                        'partner_id': self.env.ref('base.public_partner').id,
-                    }).create_order_from_tn()
+                order_odoo = self.env['sale.order']._tn_find_or_create(order['id'])
+                if order_odoo.state == 'draft':
+                    order_odoo.create_order_from_tn()
         else:
             # Creamos log de TN
             self.env['tn.log'].create_log(

@@ -158,33 +158,19 @@ class TiendaNubeWebHook(http.Controller):
                     #ORDENES
                     #order/created
                     elif webhook.event == 'order/created':
-                        #Buscamos la orden en Odoo y si no existe la creamos
-                        order = request.env['sale.order'].sudo().search([
-                            ('id_tn','=',data['id'])
-                            ],limit=1)
-                        if not order:
-                            #Asignamos de forma temporal como cliente a la empresa para poder crear la orden
-                            order = request.env['sale.order'].with_company(company_id).sudo().create({
-                                'id_tn': data['id'],
-                                'partner_id': request.env.company.sudo().partner_id.id,
-                                'name': 'Orden TN id: ' + str(data['id']),
-                            })
+                        #Buscamos la orden en Odoo, si no existe la creamos; si esta en
+                        #borrador (nueva o incompleta por una carrera con otro proceso)
+                        #la (re)completamos con el JSON actual de Tienda Nube.
+                        order = request.env['sale.order'].with_company(company_id).sudo()._tn_find_or_create(data['id'])
+                        if order.state == 'draft':
                             order.sudo().with_company(company_id).create_order_from_tn()
                         exitoso = True
 
                     #order/paid
                     elif webhook.event == 'order/paid':
-                        #Buscamos la orden en Odoo y si no existe la creamos
-                        order = request.env['sale.order'].sudo().search([
-                            ('id_tn','=',data['id'])
-                            ],limit=1)
-                        if not order:
-                            #Asignamos de forma temporal como cliente a la empresa para poder crear la orden
-                            order = request.env['sale.order'].with_company(company_id).sudo().create({
-                                'id_tn': data['id'],
-                                'partner_id': request.env.company.sudo().partner_id.id,
-                                'name': 'Orden TN id: ' + str(data['id']),
-                            })
+                        #Idem order/created: crea o refresca la orden en borrador.
+                        order = request.env['sale.order'].with_company(company_id).sudo()._tn_find_or_create(data['id'])
+                        if order.state == 'draft':
                             order.sudo().with_company(company_id).create_order_from_tn()
                         exitoso = True
 
