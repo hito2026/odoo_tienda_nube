@@ -112,10 +112,15 @@ class SaleOrderTiendaNubeInherit(models.Model):
         if self.state != 'draft':
             raise ValidationError(_("La orden de venta debe estar en estado Borrador para poder ser editada por Tienda Nube"))
         try:
-            if self.env.context.get('company_id'):
+            # NOTE: priorizamos la compañia propia de la orden (self.company_id) sobre el
+            # contexto ambiente - en instalaciones con mas de una compañia, self.env.company
+            # puede no coincidir con la compañia real de esta orden (ej. cron corriendo con
+            # la compañia por defecto del usuario en vez de la compañia conectada a TN).
+            if self.company_id:
+                company = self.company_id
+            elif self.env.context.get('company_id'):
                 company = self.env['res.company'].browse(self.env.context.get('company_id'))
             else:
-                # NOTE: Utilizamos la compañia que tiene seleccionada el usuario actual o en caso contrario la compañia predeterminada de ese usuario
                 company = self.env.company if self.env.company else self.env.user.company_id
             headers = company.get_headers_tn()
             url = "https://api.tiendanube.com/v1/%s/orders/%s?aggregates=fulfillment_orders" % (company.tiendanube_id, self.id_tn)
@@ -376,9 +381,15 @@ class SaleOrderTiendaNubeInherit(models.Model):
                 })
 
                 #Verificamos si hay Almacen de salida
-                if order.get('fulfillments'):
-                    # Buscamos el Almacen de salida
-                    warehouse_id = self.env['stock.warehouse'].search([('location_id_tn', '=', order['fulfillments'][0]['assigned_location']['location_id'])], limit=1)
+                # assigned_location puede venir en null (fulfillment aun sin ubicacion asignada)
+                assigned_location = (order.get('fulfillments') or [{}])[0].get('assigned_location') or {}
+                if assigned_location.get('location_id'):
+                    # Buscamos el Almacen de salida - acotado a la compañia de esta orden para
+                    # no matchear por error un almacen de otra compañia con el mismo location_id_tn.
+                    warehouse_id = self.env['stock.warehouse'].search([
+                        ('location_id_tn', '=', assigned_location['location_id']),
+                        ('company_id', '=', self.company_id.id),
+                    ], limit=1)
                     if not warehouse_id:
                         raise ValidationError(_("Almacen de salida no encontrada en Odoo"))
                     self.warehouse_id = warehouse_id.id
