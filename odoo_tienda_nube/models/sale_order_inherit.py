@@ -1,6 +1,7 @@
 import logging
 import requests
 import base64
+import traceback
 
 from datetime import datetime
 from psycopg2 import IntegrityError
@@ -218,11 +219,14 @@ class SaleOrderTiendaNubeInherit(models.Model):
                             id_type = self.env['l10n_latam.identification.type'].search([('name', 'ilike', doc_name)], limit=1)
                             if id_type:
                                 l10n_latam_id = id_type.id
+                    # Tienda Nube puede mandar "customer": null (compras como invitado); en ese
+                    # caso usamos los datos de contacto de la orden en vez de romper.
+                    customer = order.get('customer') or {}
                     partner_vals = {
-                        'name': order['customer']['name'] if 'customer' in order else order['contact_name'],
-                        'email': order['customer']['email'] if 'customer' in order else order['contact_email'],
-                        'phone': order['customer']['phone'] if 'customer' in order else order['contact_phone'],
-                        'vat': order['customer']['identification'] if 'customer' in order else order['contact_identification'],
+                        'name': customer.get('name') or order['contact_name'],
+                        'email': customer.get('email') or order['contact_email'],
+                        'phone': customer.get('phone') or order['contact_phone'],
+                        'vat': customer.get('identification') or order['contact_identification'],
                         'company_type': 'person',
                         'street': street,
                         'street2': order.get('billing_floor') or False,
@@ -265,8 +269,12 @@ class SaleOrderTiendaNubeInherit(models.Model):
                     })
 
                 # DESCUENTOS
-                has_coupon = len(order['coupon']) > 0
-                has_promotions = len(order['promotional_discount']['promotions_applied']) > 0
+                # Tienda Nube manda "coupon"/"promotional_discount" en null cuando no aplica,
+                # en vez de omitir la clave - por eso se normalizan antes de usarlos.
+                order_coupons = order.get('coupon') or []
+                promotions_applied = (order.get('promotional_discount') or {}).get('promotions_applied') or []
+                has_coupon = len(order_coupons) > 0
+                has_promotions = len(promotions_applied) > 0
                 has_gateway_discount = order.get('discount_gateway') and float(order['discount_gateway']) > 0
 
                 if has_coupon or has_promotions or has_gateway_discount:
@@ -283,7 +291,7 @@ class SaleOrderTiendaNubeInherit(models.Model):
                     )
 
                     # Verificamos por cupones de descuento
-                    for coupon in order['coupon']:
+                    for coupon in order_coupons:
                         coupon_tn = self.env['coupon.tn'].search([('id_tn', '=', coupon['id'])], limit=1)
                         if not coupon_tn:
                             coupon_tn = self.env['coupon.tn'].create({
@@ -313,24 +321,23 @@ class SaleOrderTiendaNubeInherit(models.Model):
                         })
 
                     # Verificamos por promociones aplicadas
-                    if 'promotions_applied' in order['promotional_discount']:
-                        for promotions_applied in order['promotional_discount']['promotions_applied']:
-                            if self.promotions_applied_tn:
-                                self.promotions_applied_tn += "Tipo: " + promotions_applied['discount_script_type'] + " - Descuento: " + promotions_applied['total_discount_amount_short'] + "\n"
-                            else:
-                                self.promotions_applied_tn = "Tipo: " + promotions_applied['discount_script_type'] + " - Descuento: " + promotions_applied['total_discount_amount_short'] + "\n"
-                            discount_promo_amount = float(promotions_applied['total_discount_amount'])
-                            if self.company_id.tn_type_tax == 'not_included':
-                                value_tax = (((product_discount_tn.taxes_id.compute_all(discount_promo_amount)['total_included']) * 100) / (product_discount_tn.taxes_id.compute_all(discount_promo_amount)['total_excluded'])) / 100
-                                if value_tax:
-                                    discount_promo_amount = discount_promo_amount / value_tax
-                            self.env['sale.order.line'].create({
-                                'name': 'Promoción ' + promotions_applied['discount_script_type'],
-                                'order_id': self.id,
-                                'product_id': product_discount_tn.id,
-                                'product_uom_qty': -1,
-                                'price_unit': discount_promo_amount,
-                            })
+                    for promo_applied in promotions_applied:
+                        if self.promotions_applied_tn:
+                            self.promotions_applied_tn += "Tipo: " + promo_applied['discount_script_type'] + " - Descuento: " + promo_applied['total_discount_amount_short'] + "\n"
+                        else:
+                            self.promotions_applied_tn = "Tipo: " + promo_applied['discount_script_type'] + " - Descuento: " + promo_applied['total_discount_amount_short'] + "\n"
+                        discount_promo_amount = float(promo_applied['total_discount_amount'])
+                        if self.company_id.tn_type_tax == 'not_included':
+                            value_tax = (((product_discount_tn.taxes_id.compute_all(discount_promo_amount)['total_included']) * 100) / (product_discount_tn.taxes_id.compute_all(discount_promo_amount)['total_excluded'])) / 100
+                            if value_tax:
+                                discount_promo_amount = discount_promo_amount / value_tax
+                        self.env['sale.order.line'].create({
+                            'name': 'Promoción ' + promo_applied['discount_script_type'],
+                            'order_id': self.id,
+                            'product_id': product_discount_tn.id,
+                            'product_uom_qty': -1,
+                            'price_unit': discount_promo_amount,
+                        })
 
                     # Verificamos por descuento de medio de pago (gateway)
                     if has_gateway_discount:
@@ -369,7 +376,7 @@ class SaleOrderTiendaNubeInherit(models.Model):
                 })
 
                 #Verificamos si hay Almacen de salida
-                if len(order['fulfillments']) > 0:
+                if order.get('fulfillments'):
                     # Buscamos el Almacen de salida
                     warehouse_id = self.env['stock.warehouse'].search([('location_id_tn', '=', order['fulfillments'][0]['assigned_location']['location_id'])], limit=1)
                     if not warehouse_id:
@@ -386,8 +393,8 @@ class SaleOrderTiendaNubeInherit(models.Model):
                 # Creamos un log
                 self.env['tn.log'].create_log('No se pudo crear Orden de Venta', 'Error al obtener orden de Tienda Nube', 'sale.order', self.id, 'error', response.text)
         except Exception as e:
-            # Creamos un log
-            self.env['tn.log'].create_log('No se pudo crear Orden de Venta', str(e), 'sale.order', self.id, 'error')
+            # Creamos un log con traceback completo para poder diagnosticar sin adivinar la linea
+            self.env['tn.log'].create_log('No se pudo crear Orden de Venta', str(e), 'sale.order', self.id, 'error', traceback.format_exc())
 
     _TN_BILLING_TYPE_TO_AFIP_CODE = {
         'Consumidor Final': '5',
