@@ -6,26 +6,6 @@
             <field name="inherit_id" ref="product.product_template_only_form_view"/>
             <field name="arch" type="xml">
 
-                <field name="categ_id" position="after">
-                    <field name="categoria_tn_ids" domain="[('tn_id', '!=', False)]"
-                           options="{'no_create': True, 'no_create_edit':True}" widget="many2many_tags"/>
-                    <field name="id_tn" readonly="1"/>
-                    <field name="canonical_url" readonly="1" widget="url"/>
-                    <field name="envio_gratis_tn"/>
-                    <field name="mostrar_en_tienda_tn"/>
-                    <field name="stock_ilimitado_tn" invisible="product_variant_count > 1"/>
-                    <field name="tn_pausar_stock_producto" invisible="product_variant_count > 1"/>
-                    <field name="precio_promocional_tn" invisible="product_variant_count > 1"/>
-                    <field name="alto_tn" invisible="product_variant_count > 1"/>
-                    <field name="ancho_tn" invisible="product_variant_count > 1"/>
-                    <field name="profundidad_tn" invisible="product_variant_count > 1"/>
-                    <field name="peso_tn" invisible="product_variant_count > 1"/>
-                    <field name="mpn_tn" invisible="product_variant_count > 1"/>
-                    <field name="rango_edad_tn" invisible="product_variant_count > 1"/>
-                    <field name="sexo_tn" invisible="product_variant_count > 1"/>
-                    <field name="contemplar_imagen_variantes_tn" invisible="product_variant_count > 1"/>
-                </field>
-
                 <xpath expr="//page[@name='sales']/group[@name='sale']" position="inside">
                     <group colspan="2" name="product_template_images_tn" string="Galeria de Tienda Nube">
                         <field
@@ -59,6 +39,29 @@
                                         type="object" class="oe_highlight" invisible="id_tn == False"/>
                                 <button name="update_stock_tn" string="Actualizar Stock en Tienda Nube" type="object"
                                         class="oe_highlight" invisible="id_tn == False"/>
+                            </group>
+                        </group>
+                        <group>
+                            <group>
+                                <field name="categoria_tn_ids" domain="[('tn_id', '!=', False)]"
+                                       options="{'no_create': True, 'no_create_edit':True}" widget="many2many_tags"/>
+                                <field name="id_tn" readonly="1"/>
+                                <field name="canonical_url" readonly="1" widget="url"/>
+                                <field name="envio_gratis_tn"/>
+                                <field name="mostrar_en_tienda_tn"/>
+                                <field name="contemplar_imagen_variantes_tn" invisible="product_variant_count > 1"/>
+                            </group>
+                            <group>
+                                <field name="stock_ilimitado_tn" invisible="product_variant_count > 1"/>
+                                <field name="tn_pausar_stock_producto" invisible="product_variant_count > 1"/>
+                                <field name="precio_promocional_tn" invisible="product_variant_count > 1"/>
+                                <field name="alto_tn" invisible="product_variant_count > 1"/>
+                                <field name="ancho_tn" invisible="product_variant_count > 1"/>
+                                <field name="profundidad_tn" invisible="product_variant_count > 1"/>
+                                <field name="peso_tn" invisible="product_variant_count > 1"/>
+                                <field name="mpn_tn" invisible="product_variant_count > 1"/>
+                                <field name="rango_edad_tn" invisible="product_variant_count > 1"/>
+                                <field name="sexo_tn" invisible="product_variant_count > 1"/>
                             </group>
                         </group>
                     </page>

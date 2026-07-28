@@ -852,6 +852,99 @@ class TiendaNubeResCompanyInherit(models.Model):
         today = date.today()
         self.get_orders_by_date_tn(today, today)
 
+    # Metodo para abrir el wizard de prueba de conexión
+    def action_test_connection_tn(self):
+        """Abre un wizard que prueba la conexión con Tienda Nube"""
+        result = self.test_connection_tn()
+
+        # Crear el registro del wizard con el resultado
+        wizard = self.env['test.connection.tn.wizard'].create({
+            'success': result['success'],
+            'message': result['message'],
+        })
+
+        return {
+            'type': 'ir.actions.act_window',
+            'res_model': 'test.connection.tn.wizard',
+            'view_mode': 'form',
+            'res_id': wizard.id,
+            'target': 'new',
+        }
+
+    # Metodo para probar la conexión con Tienda Nube
+    def test_connection_tn(self):
+        """Prueba la conexión con la API de Tienda Nube y retorna el resultado"""
+        try:
+            if not self.tiendanube_id:
+                message = 'ID de Tienda Nube no configurado'
+                _logger.warning(message)
+                return {
+                    'success': False,
+                    'message': message,
+                }
+
+            headers = self.get_headers_tn()
+            _logger.info('Probando conexión con Tienda Nube para empresa %s (ID: %s)', self.name, self.tiendanube_id)
+
+            # Intentamos obtener las categorías como prueba
+            url = "https://api.tiendanube.com/v1/%s/categories" % self.tiendanube_id
+            response = requests.get(url, headers=headers, timeout=10)
+
+            if response.status_code == 200:
+                _logger.info('Conexión exitosa con Tienda Nube para empresa %s', self.name)
+                return {
+                    'success': True,
+                    'message': 'Conexión exitosa con Tienda Nube API',
+                }
+            elif response.status_code == 401:
+                message = 'Token de acceso inválido o expirado. Respuesta: %s' % response.text
+                _logger.error(message)
+                return {
+                    'success': False,
+                    'message': message,
+                }
+            elif response.status_code == 404:
+                message = 'ID de Tienda Nube no válido (404). Respuesta: %s' % response.text
+                _logger.error(message)
+                return {
+                    'success': False,
+                    'message': message,
+                }
+            else:
+                message = 'Error en la conexión (HTTP %s). Respuesta: %s' % (response.status_code, response.text)
+                _logger.error(message)
+                return {
+                    'success': False,
+                    'message': message,
+                }
+        except requests.exceptions.Timeout:
+            message = 'La conexión a Tienda Nube tardó demasiado (timeout)'
+            _logger.error(message)
+            return {
+                'success': False,
+                'message': message,
+            }
+        except requests.exceptions.ConnectionError as e:
+            message = 'Error de conexión a Tienda Nube: %s' % str(e)
+            _logger.error(message)
+            return {
+                'success': False,
+                'message': message,
+            }
+        except ValidationError as e:
+            _logger.error('Error de validación en prueba de conexión: %s', str(e))
+            return {
+                'success': False,
+                'message': str(e),
+            }
+        except Exception as e:
+            message = 'Error inesperado: %s' % str(e)
+            _logger.error(message)
+            return {
+                'success': False,
+                'message': message,
+            }
+
     # Metodo para traer Almacenes y Ubicaciones de Tienda Nube a Odoo
     def get_location_tn(self):
         url = "https://api.tiendanube.com/v1/%s/locations" % self.tiendanube_id

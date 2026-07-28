@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<odoo>
+    <record id="test_connection_tn_wizard_view_form" model="ir.ui.view">
+        <field name="name">Prueba de Conexión - Tienda Nube</field>
+        <field name="model">test.connection.tn.wizard</field>
+        <field name="arch" type="xml">
+            <form>
+                <div class="alert alert-success" invisible="not success">
+                    <b>✓ Conexión Exitosa</b>
+                    <p><field name="message" nolabel="1" /></p>
+                </div>
+                <div class="alert alert-danger" invisible="success">
+                    <b>✗ Error de Conexión</b>
+                    <p><field name="message" nolabel="1" /></p>
+                </div>
+                <footer>
+                    <button string="Cerrar" class="btn-secondary" special="cancel" />
+                </footer>
+            </form>
+        </field>
+    </record>
+
+    <record id="test_connection_tn_wizard_action" model="ir.actions.act_window">
+        <field name="name">Prueba de Conexión</field>
+        <field name="res_model">test.connection.tn.wizard</field>
+        <field name="view_mode">form</field>
+        <field name="view_id" ref="test_connection_tn_wizard_view_form"/>
+        <field name="target">new</field>
+    </record>
+</odoo>
