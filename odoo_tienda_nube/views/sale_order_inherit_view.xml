@@ -64,7 +64,12 @@
                         <notebook>
                             <page string="Descuentos">
                                 <group>
-                                    <field name="coupon_tn_ids" widget="many2many_tags" readonly="1"/>
+                                    <group string="Cupones">
+                                        <field name="coupon_tn_ids" widget="many2many_tags" readonly="1" nolabel="1"/>
+                                    </group>
+                                    <group string="Medio de Pago">
+                                        <field name="discount_gateway_tn" readonly="1" nolabel="1"/>
+                                    </group>
                                 </group>
                                 <group>
                                     <field name="promotions_applied_tn" readonly="1"/>
