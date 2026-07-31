@@ -35,7 +35,7 @@ class TiendaNubeResCompanyInherit(models.Model):
     )
     tn_config_confirmation_sale = fields.Boolean('Confirmar venta', help="Si esta activo se confirma la venta al crear la orden de venta, sino se deja en estado borrador")
     tn_config_stock_realtime = fields.Boolean('Stock en tiempo real', help="Si esta activo se actualiza el stock en tiempo real, sino se actualiza cada 30 minutos")
-    tn_pricelist_id = fields.Many2one('product.pricelist', string='Lista de Precios Tienda Nube', help="Lista de precios que se usara para los productos de Tienda Nube", required=True)
+    tn_pricelist_id = fields.Many2one('product.pricelist', string='Lista de Precios Tienda Nube', help="Lista de precios que se usara para los productos de Tienda Nube")
     tn_config_update_product_price_cron = fields.Boolean('Actualizar precios cada X tiempo', help="Si esta activo se actualizan los precios de los productos en Tienda Nube automaticamente cada dia o segun temporalidad en el cron configurado")
     tn_type_tax = fields.Selection([
         ('included', 'Incluido'),
@@ -55,6 +55,19 @@ class TiendaNubeResCompanyInherit(models.Model):
     update_product_tn_cost = fields.Boolean('Actualizar Costo', default=True, help="Si esta activo se actualiza el costo del producto en Tienda Nube")
     update_product_tn_description = fields.Boolean('Actualizar Descripcion', default=True, help="Si esta activo se actualiza la descripcion del producto en Tienda Nube") 
     update_product_tn_published = fields.Boolean('Actualizar Publicacion', default=True, help="Si esta activo se actualiza la publicacion del producto en Tienda Nube")
+
+    @api.constrains('tiendanube_access_token', 'tiendanube_id', 'tn_pricelist_id')
+    def _check_tn_pricelist_id_required(self):
+        # tn_pricelist_id solo es obligatoria para compañias que efectivamente se conectan a
+        # Tienda Nube - en instalaciones multi-compañia, las que no tienen token no deben
+        # verse forzadas a completarla (evita ademas romper el schema check por NOT NULL
+        # en compañias sin relacion con Tienda Nube).
+        for company in self:
+            if company.tiendanube_access_token and company.tiendanube_id and not company.tn_pricelist_id:
+                raise ValidationError(_(
+                    "La compañía %s tiene configurado el acceso a Tienda Nube, por lo que "
+                    "debe tener una Lista de Precios de Tienda Nube asignada."
+                ) % company.name)
 
     def update_product_images_tn(self, products):
         headers = self.get_headers_tn()
