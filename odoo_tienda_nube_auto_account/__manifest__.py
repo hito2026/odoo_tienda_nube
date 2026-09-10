@@ -17,7 +17,7 @@
         3. Validar el picking de salida para disparar la facturacion y el cobro.
     """,
     "category": "Sale",
-    "version": "19.0.1.1.0",
+    "version": "19.0.1.1.1",
     "author": "Hitofusion",
     "website": "https://devoo.io",
     "license": "LGPL-3",

@@ -1,5 +1,10 @@
 # Changelog
 
+## 19.0.1.1.1 - 2026-09-10
+
+### Fixed
+- Error `Invalid field account.payment.ref` al validar el picking: desde Odoo 18 `account.payment` ya no toma `ref` por delegacion de `account.move` y el campo se llama `memo`. Se resuelve el nombre en runtime (`_tn_payment_memo_field`) para mantener compatibilidad con 17.0.
+
 ## 18.0.1.1.0 - 2026-05-29
 
 ### Added

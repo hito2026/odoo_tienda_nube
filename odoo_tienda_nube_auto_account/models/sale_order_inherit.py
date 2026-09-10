@@ -299,6 +299,10 @@ class SaleOrderTnAutoAccount(models.Model):
 
         return invoice
 
+    def _tn_payment_memo_field(self):
+        """Campo de referencia del pago: `memo` desde Odoo 18, `ref` en versiones previas."""
+        return "memo" if "memo" in self.env["account.payment"]._fields else "ref"
+
     def _tn_payment_ref(self):
         self.ensure_one()
         order_ref = self.number_tn or self.id_tn or self.name
@@ -313,7 +317,7 @@ class SaleOrderTnAutoAccount(models.Model):
                 ("partner_id", "=", invoice.partner_id.id),
                 ("journal_id", "=", journal.id),
                 ("payment_type", "=", "inbound"),
-                ("ref", "=", ref),
+                (self._tn_payment_memo_field(), "=", ref),
             ]
         )
         for payment in candidates:
@@ -382,7 +386,7 @@ class SaleOrderTnAutoAccount(models.Model):
             "date": self.payment_date_tn or fields.Date.context_today(self),
             "journal_id": journal.id,
             "payment_method_line_id": payment_method_line.id,
-            "ref": ref,
+            self._tn_payment_memo_field(): ref,
             "company_id": self.company_id.id,
         }
 
