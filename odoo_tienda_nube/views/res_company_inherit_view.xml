@@ -20,6 +20,9 @@
                             <field name="tn_pricelist_id" options="{'no_create': True, 'no_create_edit': True}" required="tiendanube_access_token and tiendanube_id"/>
                             <field name="tn_config_update_product_price_cron"/>
                             <field name="tn_type_tax"/>
+                            <field name="tn_force_tax_ids" widget="many2many_tags"
+                                   domain="[('type_tax_use', '=', 'sale'), ('company_id', '=', id)]"
+                                   options="{'no_create': True, 'no_create_edit': True}"/>
                         </group>
                         <group>
                         </group>

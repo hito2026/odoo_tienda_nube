@@ -41,6 +41,20 @@ class TiendaNubeResCompanyInherit(models.Model):
         ('included', 'Incluido'),
         ('not_included', 'No incluido'),
     ], string='Tipo de Impuesto Tienda Nube', default='included', help="Si es 'Incluido' el precio incluye el impuesto, si es 'No incluido' el precio no incluye el impuesto")
+    tn_force_tax_ids = fields.Many2many(
+        'account.tax',
+        'res_company_tn_force_tax_rel',
+        'company_id',
+        'tax_id',
+        string='Impuestos a forzar en lineas TN',
+        domain=[('type_tax_use', '=', 'sale')],
+        help="Impuestos que se aplican a TODAS las lineas de las ordenes creadas desde Tienda "
+             "Nube (productos, descuentos y envio), en reemplazo de los impuestos configurados "
+             "en el producto. Sirve para vender por Tienda Nube con un impuesto distinto al que "
+             "el producto usa en otros canales, sin tener que tocar la ficha del producto. "
+             "Los impuestos que agrega la posicion fiscal (percepciones) se conservan. "
+             "Si se deja vacio, cada linea usa los impuestos de su producto, como siempre."
+    )
 
     # Conf sincronizacion de productos
     update_product_tn_name = fields.Boolean('Actualizar nombre', default=True, help="Si esta activo se actualiza el nombre del producto en Tienda Nube")
@@ -55,6 +69,32 @@ class TiendaNubeResCompanyInherit(models.Model):
     update_product_tn_cost = fields.Boolean('Actualizar Costo', default=True, help="Si esta activo se actualiza el costo del producto en Tienda Nube")
     update_product_tn_description = fields.Boolean('Actualizar Descripcion', default=True, help="Si esta activo se actualiza la descripcion del producto en Tienda Nube") 
     update_product_tn_published = fields.Boolean('Actualizar Publicacion', default=True, help="Si esta activo se actualiza la publicacion del producto en Tienda Nube")
+
+    @api.constrains('tn_force_tax_ids')
+    def _check_tn_force_tax_ids(self):
+        # Los impuestos forzados terminan en las lineas de venta de esta compañia, asi que
+        # tienen que pertenecerle (o a una compañia padre, en instalaciones con sucursales).
+        for company in self:
+            allowed = company
+            if 'parent_ids' in company._fields:
+                allowed = company.parent_ids
+            wrong = company.tn_force_tax_ids.filtered(lambda t: t.company_id and t.company_id not in allowed)
+            if wrong:
+                raise ValidationError(_(
+                    "Los impuestos %s no pertenecen a la compañía %s, por lo que no se pueden "
+                    "usar en las ordenes de Tienda Nube de esa compañía."
+                ) % (', '.join(wrong.mapped('name')), company.name))
+            # En Argentina la localizacion exige exactamente un impuesto del grupo IVA por
+            # linea de venta: si se configuran dos, la sincronizacion de la orden falla al
+            # crear las lineas. Lo avisamos aca en vez de dejar que reviente en cada orden.
+            if 'l10n_ar_vat_afip_code' in self.env['account.tax.group']._fields:
+                vat_taxes = company.tn_force_tax_ids.filtered(lambda t: t.tax_group_id.l10n_ar_vat_afip_code)
+                if len(vat_taxes) > 1:
+                    raise ValidationError(_(
+                        "Se configuro mas de un impuesto de IVA (%s) para las lineas de Tienda "
+                        "Nube. Debe haber uno solo; los demas impuestos pueden ser percepciones "
+                        "u otros grupos."
+                    ) % ', '.join(vat_taxes.mapped('name')))
 
     @api.constrains('tiendanube_access_token', 'tiendanube_id', 'tn_pricelist_id')
     def _check_tn_pricelist_id_required(self):

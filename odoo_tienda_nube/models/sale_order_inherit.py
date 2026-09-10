@@ -85,6 +85,116 @@ class SaleOrderTiendaNubeInherit(models.Model):
             order = self.sudo().search([('id_tn', '=', id_tn)], limit=1)
         return order
 
+    def _tn_effective_taxes(self, product):
+        """Impuestos con los que va a quedar la linea: los forzados en la compañia si hay,
+        si no los del producto. Se usa para desarmar el precio que manda Tienda Nube, que
+        siempre viene con impuestos incluidos."""
+        self.ensure_one()
+        forced = self.company_id.tn_force_tax_ids
+        if forced:
+            return forced
+        return product.taxes_id
+
+    def _tn_price_unit_without_taxes(self, price_unit, taxes):
+        """Tienda Nube manda el precio con impuestos incluidos. Cuando la compañia esta
+        configurada como 'No incluido' hay que desarmarlo, y hay que hacerlo con los
+        impuestos que la linea va a llevar en Odoo: si se fuerza un IVA distinto al del
+        producto, desarmar con el del producto daria un neto equivocado."""
+        self.ensure_one()
+        if self.company_id.tn_type_tax != 'not_included' or not price_unit or not taxes:
+            return price_unit
+        totals = taxes.compute_all(price_unit)
+        if not totals['total_included']:
+            return price_unit
+        return price_unit * totals['total_excluded'] / totals['total_included']
+
+    def _tn_apply_forced_taxes(self, order_line):
+        """Reemplaza en la linea los impuestos que aporto el producto por los configurados
+        en la compañia, conservando los que agrego la posicion fiscal (percepciones).
+
+        Se hace despues de crear la linea a proposito: si se pasaran los impuestos en el
+        create, el compute de tax_ids no correria y se perderian esas percepciones."""
+        self.ensure_one()
+        forced = self.company_id.tn_force_tax_ids
+        if not forced or not order_line or order_line.display_type:
+            return
+        product_taxes = order_line.order_id.fiscal_position_id.map_tax(order_line.product_id.taxes_id)
+        extra_taxes = order_line.tax_ids - product_taxes
+        order_line.tax_ids = [fields.Command.set((forced | extra_taxes).ids)]
+
+    def _tn_prepare_partner_vals(self, order):
+        """Arma los valores del contacto a crear a partir del payload de la orden TN."""
+        # Direccion
+        street_parts = [order.get('billing_address') or '']
+        if order.get('billing_number'):
+            street_parts.append(order['billing_number'])
+        street = ' '.join(filter(None, street_parts)) or False
+        country = self.env['res.country'].search([('code', '=', order.get('billing_country'))], limit=1)
+        state = False
+        if order.get('billing_province') and country:
+            state = self.env['res.country.state'].search([
+                ('name', 'ilike', order['billing_province']),
+                ('country_id', '=', country.id),
+            ], limit=1)
+        # Tipo de documento
+        billing_document_type = order.get('billing_document_type') or (order.get('customer') or {}).get('document_type')
+        l10n_latam_id = False
+        if billing_document_type:
+            id_type = self.env['l10n_latam.identification.type'].search([('name', 'ilike', billing_document_type)], limit=1)
+            if id_type:
+                l10n_latam_id = id_type.id
+        elif order.get('billing_country') == 'AR':
+            identification = order.get('contact_identification') or (order.get('customer') or {}).get('identification') or ''
+            digits = ''.join(filter(str.isdigit, str(identification)))
+            if len(digits) in (7, 8):
+                doc_name = 'DNI'
+            elif len(digits) in (10, 11):
+                doc_name = 'CUIT'
+            else:
+                doc_name = None
+            if doc_name:
+                id_type = self.env['l10n_latam.identification.type'].search([('name', 'ilike', doc_name)], limit=1)
+                if id_type:
+                    l10n_latam_id = id_type.id
+        # Tienda Nube puede mandar "customer": null (compras como invitado); en ese
+        # caso usamos los datos de contacto de la orden en vez de romper.
+        customer = order.get('customer') or {}
+        partner_vals = {
+            'name': customer.get('name') or order['contact_name'],
+            'email': customer.get('email') or order['contact_email'],
+            'phone': customer.get('phone') or order['contact_phone'],
+            'vat': customer.get('identification') or order['contact_identification'],
+            'company_type': 'person',
+            'street': street,
+            'street2': order.get('billing_floor') or False,
+            'zip': order.get('billing_zipcode') or False,
+            'city': order.get('billing_city') or False,
+            'state_id': state.id if state else False,
+            'country_id': country.id if country else False,
+        }
+        if l10n_latam_id:
+            partner_vals['l10n_latam_identification_type_id'] = l10n_latam_id
+        return partner_vals
+
+    def _tn_find_or_create_partner(self, order):
+        """Busca el contacto de la orden TN por identificacion o email; si no existe lo crea.
+
+        Punto de extension: los modulos de localizacion enganchan aca para completar
+        datos fiscales del contacto recien creado."""
+        partner = self.env['res.partner']
+        if order['contact_identification'] != None:
+            partner = self.env['res.partner'].search([('vat', '=', order['contact_identification'])], limit=1)
+        elif order['contact_email'] != None:
+            partner = self.env['res.partner'].search([('email', '=', order['contact_email'])], limit=1)
+        if not partner:
+            partner = self.env['res.partner'].create(self._tn_prepare_partner_vals(order))
+            self._tn_post_create_partner(partner, order)
+        return partner
+
+    def _tn_post_create_partner(self, partner, order):
+        """Hook post creacion del contacto. Vacio en el conector generico."""
+        return
+
     # Metodo para crear la orden en Odoo desde TN GET /orders/{id}
     def create_order_from_tn(self):
         if self.state != 'draft':
@@ -164,63 +274,7 @@ class SaleOrderTiendaNubeInherit(models.Model):
                 self.shipping_pickup_type_tn = order['shipping_pickup_type']
 
                 # Buscamos el cliente
-                partner = self.env['res.partner']
-                if order['contact_identification'] != None:
-                    partner = self.env['res.partner'].search([('vat', '=', order['contact_identification'])], limit=1)
-                elif order['contact_email'] != None:
-                    partner = self.env['res.partner'].search([('email', '=', order['contact_email'])], limit=1)
-                if not partner:
-                    # Dirección
-                    street_parts = [order.get('billing_address') or '']
-                    if order.get('billing_number'):
-                        street_parts.append(order['billing_number'])
-                    street = ' '.join(filter(None, street_parts)) or False
-                    country = self.env['res.country'].search([('code', '=', order.get('billing_country'))], limit=1)
-                    state = False
-                    if order.get('billing_province') and country:
-                        state = self.env['res.country.state'].search([
-                            ('name', 'ilike', order['billing_province']),
-                            ('country_id', '=', country.id),
-                        ], limit=1)
-                    # Tipo de documento
-                    billing_document_type = order.get('billing_document_type') or (order.get('customer') or {}).get('document_type')
-                    l10n_latam_id = False
-                    if billing_document_type:
-                        id_type = self.env['l10n_latam.identification.type'].search([('name', 'ilike', billing_document_type)], limit=1)
-                        if id_type:
-                            l10n_latam_id = id_type.id
-                    elif order.get('billing_country') == 'AR':
-                        identification = order.get('contact_identification') or (order.get('customer') or {}).get('identification') or ''
-                        digits = ''.join(filter(str.isdigit, str(identification)))
-                        if len(digits) in (7, 8):
-                            doc_name = 'DNI'
-                        elif len(digits) in (10, 11):
-                            doc_name = 'CUIT'
-                        else:
-                            doc_name = None
-                        if doc_name:
-                            id_type = self.env['l10n_latam.identification.type'].search([('name', 'ilike', doc_name)], limit=1)
-                            if id_type:
-                                l10n_latam_id = id_type.id
-                    # Tienda Nube puede mandar "customer": null (compras como invitado); en ese
-                    # caso usamos los datos de contacto de la orden en vez de romper.
-                    customer = order.get('customer') or {}
-                    partner_vals = {
-                        'name': customer.get('name') or order['contact_name'],
-                        'email': customer.get('email') or order['contact_email'],
-                        'phone': customer.get('phone') or order['contact_phone'],
-                        'vat': customer.get('identification') or order['contact_identification'],
-                        'company_type': 'person',
-                        'street': street,
-                        'street2': order.get('billing_floor') or False,
-                        'zip': order.get('billing_zipcode') or False,
-                        'city': order.get('billing_city') or False,
-                        'state_id': state.id if state else False,
-                        'country_id': country.id if country else False,
-                    }
-                    if l10n_latam_id:
-                        partner_vals['l10n_latam_identification_type_id'] = l10n_latam_id
-                    partner = self.env['res.partner'].create(partner_vals)
+                partner = self._tn_find_or_create_partner(order)
                 self.partner_id = partner.id
                 
                 # Completamos lineas de la orden
@@ -232,17 +286,15 @@ class SaleOrderTiendaNubeInherit(models.Model):
                         missing_lines.append("'%s' (TN id: %s)" % (line['name'], line['variant_id']))
                         continue
                     #Verificamos si tenemos que quitar impuestos
-                    price_unit = float(line['price'])
-                    if self.company_id.tn_type_tax == 'not_included':
-                        value_tax = (((product.taxes_id.compute_all(price_unit)['total_included']) * 100) / (product.taxes_id.compute_all(price_unit)['total_excluded'])) / 100
-                        price_unit = price_unit / value_tax
-                    self.env['sale.order.line'].create({
+                    price_unit = self._tn_price_unit_without_taxes(float(line['price']), self._tn_effective_taxes(product))
+                    order_line = self.env['sale.order.line'].create({
                         'name': line['name'],
                         'order_id': self.id,
                         'product_id': product.id,
                         'product_uom_qty': float(line['quantity']),
                         'price_unit': price_unit,
                     })
+                    self._tn_apply_forced_taxes(order_line)
                 if missing_lines:
                     _logger.warning(
                         '[TN] Orden %s: productos no encontrados en Odoo: %s',
@@ -292,53 +344,47 @@ class SaleOrderTiendaNubeInherit(models.Model):
                                 'end_date': coupon['end_date'],
                             })
                         self.coupon_tn_ids = [(4, coupon_tn.id)]
-                        discount_coupon_amount = float(order['discount_coupon'])
-                        if self.company_id.tn_type_tax == 'not_included':
-                            value_tax = (((product_discount_tn.taxes_id.compute_all(discount_coupon_amount)['total_included']) * 100) / (product_discount_tn.taxes_id.compute_all(discount_coupon_amount)['total_excluded'])) / 100
-                            if value_tax:
-                                discount_coupon_amount = discount_coupon_amount / value_tax
-                        self.env['sale.order.line'].create({
+                        discount_coupon_amount = self._tn_price_unit_without_taxes(
+                            float(order['discount_coupon']), self._tn_effective_taxes(product_discount_tn))
+                        order_line = self.env['sale.order.line'].create({
                             'name': 'Descuento por cupón (' + coupon['code'] + ')',
                             'order_id': self.id,
                             'product_id': product_discount_tn.id,
                             'product_uom_qty': -1,
                             'price_unit': discount_coupon_amount,
                         })
+                        self._tn_apply_forced_taxes(order_line)
                     # Verificamos por promociones aplicadas
                     for promotions_applied in promotions_applied_list:
                         if self.promotions_applied_tn:
                             self.promotions_applied_tn += "Tipo: " + promotions_applied['discount_script_type'] + " - Descuento: " + promotions_applied['total_discount_amount_short'] + "\n"
                         else:
                             self.promotions_applied_tn = "Tipo: " + promotions_applied['discount_script_type'] + " - Descuento: " + promotions_applied['total_discount_amount_short'] + "\n"
-                        discount_promo_amount = float(promotions_applied['total_discount_amount'])
-                        if self.company_id.tn_type_tax == 'not_included':
-                            value_tax = (((product_discount_tn.taxes_id.compute_all(discount_promo_amount)['total_included']) * 100) / (product_discount_tn.taxes_id.compute_all(discount_promo_amount)['total_excluded'])) / 100
-                            if value_tax:
-                                discount_promo_amount = discount_promo_amount / value_tax
-                        self.env['sale.order.line'].create({
+                        discount_promo_amount = self._tn_price_unit_without_taxes(
+                            float(promotions_applied['total_discount_amount']), self._tn_effective_taxes(product_discount_tn))
+                        order_line = self.env['sale.order.line'].create({
                             'name': 'Promoción ' + promotions_applied['discount_script_type'],
                             'order_id': self.id,
                             'product_id': product_discount_tn.id,
                             'product_uom_qty': -1,
                             'price_unit': discount_promo_amount,
                         })
+                        self._tn_apply_forced_taxes(order_line)
 
                     # Verificamos por descuento de medio de pago (gateway)
                     if has_gateway_discount:
                         gateway_name = order.get('gateway_name') or order.get('gateway') or 'Medio de pago'
                         self.discount_gateway_tn = gateway_name + ': $' + order['discount_gateway']
-                        discount_gateway_amount = float(order['discount_gateway'])
-                        if self.company_id.tn_type_tax == 'not_included':
-                            value_tax = (((product_discount_tn.taxes_id.compute_all(discount_gateway_amount)['total_included']) * 100) / (product_discount_tn.taxes_id.compute_all(discount_gateway_amount)['total_excluded'])) / 100
-                            if value_tax:
-                                discount_gateway_amount = discount_gateway_amount / value_tax
-                        self.env['sale.order.line'].create({
+                        discount_gateway_amount = self._tn_price_unit_without_taxes(
+                            float(order['discount_gateway']), self._tn_effective_taxes(product_discount_tn))
+                        order_line = self.env['sale.order.line'].create({
                             'name': 'Descuento por medio de pago (' + gateway_name + ')',
                             'order_id': self.id,
                             'product_id': product_discount_tn.id,
                             'product_uom_qty': -1,
                             'price_unit': discount_gateway_amount,
                         })
+                        self._tn_apply_forced_taxes(order_line)
 
                 # ENVIO
                 product_shipping_tn = self.env.ref('odoo_tienda_nube.product_shipping_tn')
@@ -346,19 +392,17 @@ class SaleOrderTiendaNubeInherit(models.Model):
                     raise ValidationError(_("Producto de envio no encontrado en Odoo"))
                 
                 #Verificamos si tenemos que quitar impuestos
-                price_shipping = float(order['shipping_cost_customer'])
-                if self.company_id.tn_type_tax == 'not_included' and price_shipping > 0:
-                    value_tax = (((product_shipping_tn.taxes_id.compute_all(price_shipping)['total_included']) * 100) / (product_shipping_tn.taxes_id.compute_all(price_shipping)['total_excluded'])) / 100
-                    if value_tax:
-                        price_shipping = price_shipping / value_tax
+                price_shipping = self._tn_price_unit_without_taxes(
+                    float(order['shipping_cost_customer']), self._tn_effective_taxes(product_shipping_tn))
 
-                self.env['sale.order.line'].create({
+                order_line = self.env['sale.order.line'].create({
                     'name': 'Costo de Envío (' + order['shipping_option'] + ')',
                     'order_id': self.id,
                     'product_id': product_shipping_tn.id,
                     'product_uom_qty': 1,
                     'price_unit': price_shipping,
                 })
+                self._tn_apply_forced_taxes(order_line)
 
                 #Verificamos si hay Almacen de salida
                 # assigned_location puede venir en null (fulfillment aun sin ubicacion asignada)
