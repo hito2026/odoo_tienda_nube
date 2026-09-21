@@ -1,7 +1,5 @@
 import logging
 
-from markupsafe import Markup
-
 from odoo import _, models
 
 _logger = logging.getLogger(__name__)
@@ -12,6 +10,36 @@ CUIT_AFIP_CODE = '80'
 
 class SaleOrderTiendaNubeL10nArInherit(models.Model):
     _inherit = "sale.order"
+
+    def _tn_identification_variants(self, identification):
+        """Ademas del numero pelado, los formatos con que se suelen cargar a mano en Odoo:
+        DNI con puntos (30.123.456) y CUIT/CUIL con guiones (20-30123456-7)."""
+        variants = super()._tn_identification_variants(identification)
+        if identification.isdigit():
+            if len(identification) == 8:
+                variants.add('%s.%s.%s' % (identification[:2], identification[2:5], identification[5:]))
+            elif len(identification) == 7:
+                variants.add('%s.%s.%s' % (identification[:1], identification[1:4], identification[4:]))
+            elif len(identification) == 11:
+                variants.add('%s-%s-%s' % (identification[:2], identification[2:10], identification[10:]))
+        return variants
+
+    def _tn_get_identification_type(self, order, identification):
+        """Tipo de documento argentino por la cantidad de digitos, que manda sobre lo que
+        declare Tienda Nube: si el comprador eligio "DNI" pero cargo su CUIT, marcarlo como
+        DNI hace fallar la validacion de ARCA. 7-8 digitos es DNI; 11 es CUIT, o CUIL si
+        TN lo declaro asi. Se usan los xmlid de l10n_ar en vez de buscar por nombre."""
+        if identification.isdigit():
+            declared = str(order.get('billing_document_type') or '').strip().upper()
+            xmlid = False
+            if len(identification) in (7, 8):
+                xmlid = 'l10n_ar.it_dni'
+            elif len(identification) == 11:
+                xmlid = 'l10n_ar.it_CUIL' if declared == 'CUIL' else 'l10n_ar.it_cuit'
+            id_type = self.env.ref(xmlid, raise_if_not_found=False) if xmlid else False
+            if id_type:
+                return id_type
+        return super()._tn_get_identification_type(order, identification)
 
     def _tn_prepare_partner_vals(self, order):
         """Tienda Nube no informa la responsabilidad frente a ARCA, asi que el contacto se
@@ -67,20 +95,10 @@ class SaleOrderTiendaNubeL10nArInherit(models.Model):
     def _tn_notify_padron_failure(self, partner, error):
         """Nota en la venta + log TN avisando que los datos fiscales quedaron sin verificar."""
         self.ensure_one()
-        message = _(
+        self._tn_notify_partner_issue(partner, _(
             "No se pudieron traer los datos del padrón de ARCA para el contacto %(partner)s "
             "(CUIT %(vat)s). La orden se sincronizó igual con los datos que envió Tienda Nube: "
             "verificá la responsabilidad ARCA y la razón social del contacto antes de facturar.",
             partner=partner.display_name,
             vat=partner.vat or '',
-        )
-        _logger.warning('[TN] Orden %s: %s (%s)', self.id_tn, message, error)
-        self.message_post(body=Markup('%s<br/><br/>%s') % (message, str(error)))
-        self.env['tn.log'].create_log(
-            _('Padrón ARCA sin consultar — %s') % (self.name or ''),
-            message,
-            'sale.order',
-            self.id,
-            'warning',
-            str(error),
-        )
+        ), error)

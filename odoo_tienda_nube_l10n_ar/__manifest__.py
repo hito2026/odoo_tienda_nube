@@ -16,7 +16,7 @@
           orden de venta para revisar los datos del contacto.
     """,
     "category": "Sale",
-    "version": "19.0.1.0.0",
+    "version": "19.0.1.1.0",
     "author": "Hitofusion",
     "website": "https://devoo.io",
     "license": "LGPL-3",
@@ -29,5 +29,5 @@
     ],
     "installable": True,
     "application": False,
-    "auto_install": False,
+    "auto_install": True,
 }

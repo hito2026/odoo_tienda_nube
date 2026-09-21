@@ -1,12 +1,18 @@
 import logging
+import re
 import requests
 import base64
 import traceback
 
 from datetime import datetime
+from markupsafe import Markup
 from psycopg2 import IntegrityError
 from odoo import _, api, fields, models
 from odoo.exceptions import ValidationError
+from odoo.tools import email_normalize
+
+# Valores que Tienda Nube manda en vez de omitir el dato ("None" llega como string).
+TN_EMPTY_VALUES = ('', 'none', 'null')
 
 _logger = logging.getLogger(__name__)
 
@@ -122,6 +128,59 @@ class SaleOrderTiendaNubeInherit(models.Model):
         extra_taxes = order_line.tax_ids - product_taxes
         order_line.tax_ids = [fields.Command.set((forced | extra_taxes).ids)]
 
+    # --- Contacto de la orden -------------------------------------------------------
+
+    def _tn_normalize_identification(self, value):
+        """Documento sin separadores: '30.123.456' -> '30123456', '20-30123456-7' ->
+        '20301234567'. Se conservan las letras para no romper pasaportes. Devuelve '' si
+        Tienda Nube no mando el dato (null, vacio o "None" como string)."""
+        value = str(value).strip() if value else ''
+        if value.lower() in TN_EMPTY_VALUES:
+            return ''
+        return re.sub(r'[\s.\-/]', '', value)
+
+    def _tn_get_identification(self, order):
+        """Documento del comprador, normalizado. Es la unica fuente tanto para buscar como
+        para crear el contacto: antes la busqueda miraba solo contact_identification y la
+        creacion tambien customer.identification, y el DNI se perdia cuando venia solo en
+        este ultimo."""
+        customer = order.get('customer') or {}
+        for value in (customer.get('identification'), order.get('contact_identification')):
+            identification = self._tn_normalize_identification(value)
+            if identification:
+                return identification
+        return ''
+
+    def _tn_get_email(self, order):
+        customer = order.get('customer') or {}
+        for value in (customer.get('email'), order.get('contact_email')):
+            email = str(value).strip() if value else ''
+            if email.lower() not in TN_EMPTY_VALUES:
+                return email
+        return ''
+
+    def _tn_identification_variants(self, identification):
+        """Formas en que el documento puede estar guardado en Odoo. La localizacion
+        agrega los formatos con puntos y guiones de su pais."""
+        return {identification}
+
+    def _tn_get_identification_type(self, order, identification):
+        """Tipo de documento (l10n_latam) a partir del payload. Devuelve False si
+        l10n_latam no esta instalado."""
+        if 'l10n_latam.identification.type' not in self.env:
+            return False
+        IdType = self.env['l10n_latam.identification.type']
+        billing_document_type = order.get('billing_document_type') or (order.get('customer') or {}).get('document_type')
+        if billing_document_type and str(billing_document_type).lower() not in TN_EMPTY_VALUES:
+            return IdType.search([('name', 'ilike', billing_document_type)], limit=1)
+        if order.get('billing_country') == 'AR':
+            digits = ''.join(filter(str.isdigit, identification))
+            if len(digits) in (7, 8):
+                return IdType.search([('name', 'ilike', 'DNI')], limit=1)
+            if len(digits) in (10, 11):
+                return IdType.search([('name', 'ilike', 'CUIT')], limit=1)
+        return IdType
+
     def _tn_prepare_partner_vals(self, order):
         """Arma los valores del contacto a crear a partir del payload de la orden TN."""
         # Direccion
@@ -136,34 +195,15 @@ class SaleOrderTiendaNubeInherit(models.Model):
                 ('name', 'ilike', order['billing_province']),
                 ('country_id', '=', country.id),
             ], limit=1)
-        # Tipo de documento
-        billing_document_type = order.get('billing_document_type') or (order.get('customer') or {}).get('document_type')
-        l10n_latam_id = False
-        if billing_document_type:
-            id_type = self.env['l10n_latam.identification.type'].search([('name', 'ilike', billing_document_type)], limit=1)
-            if id_type:
-                l10n_latam_id = id_type.id
-        elif order.get('billing_country') == 'AR':
-            identification = order.get('contact_identification') or (order.get('customer') or {}).get('identification') or ''
-            digits = ''.join(filter(str.isdigit, str(identification)))
-            if len(digits) in (7, 8):
-                doc_name = 'DNI'
-            elif len(digits) in (10, 11):
-                doc_name = 'CUIT'
-            else:
-                doc_name = None
-            if doc_name:
-                id_type = self.env['l10n_latam.identification.type'].search([('name', 'ilike', doc_name)], limit=1)
-                if id_type:
-                    l10n_latam_id = id_type.id
+        identification = self._tn_get_identification(order)
         # Tienda Nube puede mandar "customer": null (compras como invitado); en ese
         # caso usamos los datos de contacto de la orden en vez de romper.
         customer = order.get('customer') or {}
         partner_vals = {
             'name': customer.get('name') or order['contact_name'],
-            'email': customer.get('email') or order['contact_email'],
+            'email': self._tn_get_email(order) or False,
             'phone': customer.get('phone') or order['contact_phone'],
-            'vat': customer.get('identification') or order['contact_identification'],
+            'vat': identification or False,
             'company_type': 'person',
             'street': street,
             'street2': order.get('billing_floor') or False,
@@ -172,28 +212,132 @@ class SaleOrderTiendaNubeInherit(models.Model):
             'state_id': state.id if state else False,
             'country_id': country.id if country else False,
         }
-        if l10n_latam_id:
-            partner_vals['l10n_latam_identification_type_id'] = l10n_latam_id
+        if identification:
+            id_type = self._tn_get_identification_type(order, identification)
+            if id_type:
+                partner_vals['l10n_latam_identification_type_id'] = id_type.id
         return partner_vals
 
-    def _tn_find_or_create_partner(self, order):
-        """Busca el contacto de la orden TN por identificacion o email; si no existe lo crea.
+    def _tn_search_partner_by_identification(self, identification):
+        partners = self.env['res.partner'].search([
+            ('vat', 'in', list(self._tn_identification_variants(identification))),
+        ])
+        # vat es un campo comercial: una empresa y sus contactos hijos lo comparten.
+        # Nos quedamos con el contacto comercial para no venderle a una direccion.
+        return partners.commercial_partner_id[:1]
 
-        Punto de extension: los modulos de localizacion enganchan aca para completar
-        datos fiscales del contacto recien creado."""
-        partner = self.env['res.partner']
-        if order['contact_identification'] != None:
-            partner = self.env['res.partner'].search([('vat', '=', order['contact_identification'])], limit=1)
-        elif order['contact_email'] != None:
-            partner = self.env['res.partner'].search([('email', '=', order['contact_email'])], limit=1)
-        if not partner:
-            partner = self.env['res.partner'].create(self._tn_prepare_partner_vals(order))
-            self._tn_post_create_partner(partner, order)
+    def _tn_search_partners_by_email(self, email):
+        Partner = self.env['res.partner']
+        normalized = email_normalize(email) if email else False
+        if not normalized:
+            return Partner
+        if 'email_normalized' in Partner._fields:
+            partners = Partner.search([('email_normalized', '=', normalized)])
+        else:
+            # =ilike sin escapar trataria '_' y '%' del email como comodines
+            escaped = normalized.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+            partners = Partner.search([('email', '=ilike', escaped)])
+        return partners.commercial_partner_id
+
+    def _tn_find_or_create_partner(self, order):
+        """Busca el contacto de la orden TN; si no existe lo crea.
+
+        1. Por documento, en cualquiera de los formatos en que pueda estar guardado.
+        2. Si no, por email (sin distinguir mayusculas). Si el contacto encontrado no
+           tiene documento se le completa el que mando TN. Si tiene OTRO documento, es
+           otra persona que comparte el email (familia, pareja) y se crea uno nuevo.
+        3. Si no, se crea.
+
+        Punto de extension: los modulos de localizacion enganchan en
+        _tn_post_create_partner para completar datos fiscales del contacto creado."""
+        identification = self._tn_get_identification(order)
+        if identification:
+            partner = self._tn_search_partner_by_identification(identification)
+            if partner:
+                return partner
+
+        email_partners = self._tn_search_partners_by_email(self._tn_get_email(order))
+        if email_partners:
+            if not identification:
+                return email_partners[:1]
+            same_person = email_partners.filtered(
+                lambda p: self._tn_normalize_identification(p.vat) == identification)[:1]
+            if same_person:
+                return same_person
+            without_identification = email_partners.filtered(lambda p: not p.vat)[:1]
+            if without_identification:
+                self._tn_fill_partner_identification(without_identification, order, identification)
+                return without_identification
+            # Todos los contactos con ese email tienen otro documento: no se pisa nada.
+
+        partner = self._tn_create_partner(order)
+        self._tn_post_create_partner(partner, order)
         return partner
+
+    def _tn_fill_partner_identification(self, partner, order, identification):
+        """Completa el documento de un contacto existente que no lo tenia (compra anterior
+        como invitado, otro canal de venta, alta manual). Si la localizacion lo rechaza, el
+        contacto queda como estaba y se avisa en la venta."""
+        vals = {'vat': identification}
+        id_type = self._tn_get_identification_type(order, identification)
+        if id_type:
+            vals['l10n_latam_identification_type_id'] = id_type.id
+        try:
+            with self.env.cr.savepoint():
+                partner.write(vals)
+        except ValidationError as err:
+            self._tn_notify_partner_issue(partner, _(
+                "El contacto %(partner)s ya existía sin documento y no se le pudo cargar el que "
+                "envió Tienda Nube (%(identification)s) porque no pasó la validación. "
+                "Verificá el documento del contacto antes de facturar.",
+                partner=partner.display_name,
+                identification=identification,
+            ), err)
+
+    def _tn_create_partner(self, order):
+        """Crea el contacto de la orden. Si la localizacion rechaza el documento (largo o
+        digito verificador invalido, tipo que no corresponde al numero), se crea igual sin
+        documento y se avisa en la venta: un dato mal cargado en TN no puede frenar la orden.
+
+        El create va dentro de un savepoint porque la validacion corre despues del INSERT."""
+        Partner = self.env['res.partner']
+        vals = self._tn_prepare_partner_vals(order)
+        try:
+            with self.env.cr.savepoint():
+                return Partner.create(vals)
+        except ValidationError as err:
+            if not vals.get('vat'):
+                raise
+            identification = vals.pop('vat')
+            vals.pop('l10n_latam_identification_type_id', None)
+            partner = Partner.create(vals)
+            self._tn_notify_partner_issue(partner, _(
+                "El documento que envió Tienda Nube para %(partner)s (%(identification)s) no pasó "
+                "la validación, así que el contacto se creó sin documento. Cargalo a mano antes "
+                "de facturar.",
+                partner=partner.display_name,
+                identification=identification,
+            ), err)
+            return partner
 
     def _tn_post_create_partner(self, partner, order):
         """Hook post creacion del contacto. Vacio en el conector generico."""
         return
+
+    def _tn_notify_partner_issue(self, partner, message, error=None):
+        """Nota en la venta + log TN sobre un dato del contacto que hay que revisar a mano."""
+        self.ensure_one()
+        _logger.warning('[TN] Orden %s, contacto %s: %s (%s)', self.id_tn, partner.id, message, error)
+        body = Markup('%s<br/><br/>%s') % (message, str(error)) if error else message
+        self.message_post(body=body)
+        self.env['tn.log'].create_log(
+            _('Revisar contacto — %s') % (self.name or ''),
+            message,
+            'sale.order',
+            self.id,
+            'warning',
+            str(error) if error else False,
+        )
 
     # Metodo para crear la orden en Odoo desde TN GET /orders/{id}
     def create_order_from_tn(self):
