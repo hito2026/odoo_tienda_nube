@@ -1,3 +1,4 @@
+import ast
 import logging
 import re
 import requests
@@ -254,19 +255,24 @@ class SaleOrderTiendaNubeInherit(models.Model):
         if identification:
             partner = self._tn_search_partner_by_identification(identification)
             if partner:
+                self._tn_post_find_partner(partner, order)
                 return partner
 
         email_partners = self._tn_search_partners_by_email(self._tn_get_email(order))
         if email_partners:
             if not identification:
-                return email_partners[:1]
+                partner = email_partners[:1]
+                self._tn_post_find_partner(partner, order)
+                return partner
             same_person = email_partners.filtered(
                 lambda p: self._tn_normalize_identification(p.vat) == identification)[:1]
             if same_person:
+                self._tn_post_find_partner(same_person, order)
                 return same_person
             without_identification = email_partners.filtered(lambda p: not p.vat)[:1]
             if without_identification:
                 self._tn_fill_partner_identification(without_identification, order, identification)
+                self._tn_post_find_partner(without_identification, order)
                 return without_identification
             # Todos los contactos con ese email tienen otro documento: no se pisa nada.
 
@@ -323,6 +329,44 @@ class SaleOrderTiendaNubeInherit(models.Model):
     def _tn_post_create_partner(self, partner, order):
         """Hook post creacion del contacto. Vacio en el conector generico."""
         return
+
+    def _tn_post_find_partner(self, partner, order):
+        """Hook sobre un contacto que YA existia y se reusa para esta orden.
+
+        Los datos fiscales que la localizacion completa al crear un contacto (en Argentina,
+        la responsabilidad frente a ARCA) no se completaban nunca en los contactos reusados,
+        porque el unico enganche era el alta. Aca se completa lo que falte.
+
+        Vacio en el conector generico. Solo debe rellenar campos vacios, nunca pisar datos
+        ya cargados a mano."""
+        return
+
+    def _tn_get_order_payload(self):
+        """Payload de Tienda Nube guardado en la orden. Ojo: json_tn no es JSON, es el repr
+        del dict de Python, asi que se lee con literal_eval y no con json.loads."""
+        self.ensure_one()
+        if not self.json_tn:
+            return {}
+        try:
+            payload = ast.literal_eval(self.json_tn)
+        except (ValueError, SyntaxError):
+            _logger.warning('[TN] Orden %s: no se pudo leer json_tn.', self.id_tn)
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    def action_tn_update_partner_data(self):
+        """Boton de la solapa Tienda Nube: completa los datos fiscales del contacto de la
+        orden sin tocar lineas ni precios.
+
+        El boton de sincronizacion completa solo esta disponible en borrador porque borra y
+        rearma las lineas, cosa que en una orden confirmada, con entregas y factura, es
+        destructiva. Este en cambio es seguro en cualquier estado."""
+        public_partner = self.env.ref('base.public_partner', raise_if_not_found=False)
+        for order in self:
+            if not order.partner_id or order.partner_id == public_partner:
+                continue
+            order._tn_post_find_partner(order.partner_id, order._tn_get_order_payload())
+        return True
 
     def _tn_notify_partner_issue(self, partner, message, error=None):
         """Nota en la venta + log TN sobre un dato del contacto que hay que revisar a mano."""

@@ -16,7 +16,7 @@
           orden de venta para revisar los datos del contacto.
     """,
     "category": "Sale",
-    "version": "19.0.1.1.0",
+    "version": "19.0.1.2.0",
     "author": "Hitofusion",
     "website": "https://devoo.io",
     "license": "LGPL-3",
@@ -26,6 +26,7 @@
     ],
     "data": [
         "views/res_company_inherit_view.xml",
+        "views/sale_order_inherit_view.xml",
     ],
     "installable": True,
     "application": False,

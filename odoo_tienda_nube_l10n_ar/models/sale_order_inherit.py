@@ -55,6 +55,37 @@ class SaleOrderTiendaNubeL10nArInherit(models.Model):
         self._tn_update_partner_from_padron(partner)
         return res
 
+    def _tn_post_find_partner(self, partner, order):
+        res = super()._tn_post_find_partner(partner, order)
+        self._tn_complete_partner_fiscal_data(partner)
+        return res
+
+    def _tn_complete_partner_fiscal_data(self, partner):
+        """Completa la responsabilidad ARCA de un contacto que ya existia y se reusa para
+        una orden de Tienda Nube.
+
+        La responsabilidad se cargaba solo al crear el contacto, asi que los que ya estaban
+        en la base (compras anteriores, otros canales, altas manuales) se quedaban sin ella
+        y la factura no podia determinar el tipo de comprobante.
+
+        Solo se completa si esta vacia: nunca se pisa lo que alguien cargo a mano. Al padron
+        se le pega unicamente si el contacto tiene CUIT, que es el unico caso en el que ARCA
+        puede decir algo; un consumidor final con DNI no se consulta."""
+        self.ensure_one()
+        if partner.l10n_ar_afip_responsibility_type_id:
+            return False
+
+        if self._tn_partner_has_cuit(partner):
+            self._tn_update_partner_from_padron(partner)
+            if partner.l10n_ar_afip_responsibility_type_id:
+                return True
+
+        responsibility = self.company_id.tn_default_afip_responsibility_id
+        if not responsibility:
+            return False
+        partner.l10n_ar_afip_responsibility_type_id = responsibility
+        return True
+
     def _tn_partner_has_cuit(self, partner):
         identification_code = partner.l10n_latam_identification_type_id.l10n_ar_afip_code
         return bool(partner.vat) and str(identification_code or '') == CUIT_AFIP_CODE
