@@ -22,6 +22,26 @@ class ResCompanyTnAutoAccount(models.Model):
         ),
     )
 
+    tn_auto_validate_picking = fields.Boolean(
+        string="Validar remito automaticamente",
+        help=(
+            "Al confirmarse una orden de Tienda Nube, valida automaticamente el remito que "
+            "dispara la facturacion (PICK u OUT segun el disparador de arriba) y, en rutas de "
+            "varios pasos, toda la cadena. Al validarse se encadenan factura, pago y "
+            "conciliacion. Solo se valida si Tienda Nube informa el pago como paid o authorized."
+        ),
+    )
+
+    tn_auto_validate_without_stock = fields.Boolean(
+        string="Validar aunque no haya stock",
+        help=(
+            "Si esta desactivado, el remito no se valida cuando los movimientos no estan "
+            "completamente reservados: la entrega queda pendiente y se avisa en la venta para "
+            "que la resuelva una persona. Si se activa, se valida igual y el stock puede quedar "
+            "en negativo."
+        ),
+    )
+
     tn_invoice_journal_id = fields.Many2one(
         "account.journal",
         string="Diario de Facturacion TN",

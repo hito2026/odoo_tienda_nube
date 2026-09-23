@@ -34,6 +34,7 @@ class SaleOrderTnAutoAccount(models.Model):
         for order in self:
             order._tn_refresh_payment_data_from_json()
             order._tn_try_auto_confirm_from_payment()
+            order._tn_auto_validate_pickings()
         return res
 
     def _tn_try_auto_confirm_from_payment(self):
@@ -55,6 +56,97 @@ class SaleOrderTnAutoAccount(models.Model):
                     title="Error al confirmar orden automaticamente",
                     message=str(err),
                 )
+
+    def _tn_auto_validate_pickings(self):
+        """Valida los remitos de la orden TN para que se encadenen factura, pago y
+        conciliacion sin intervencion manual.
+
+        Corre despues de la confirmacion (la de la compañia y la que dispara el estado de
+        pago TN), que es cuando existen los remitos."""
+        self.ensure_one()
+        company = self.company_id
+        if not company.tn_auto_validate_picking or not self.id_tn:
+            return False
+        if self.state not in ("sale", "done"):
+            return False
+        if not self._tn_is_paid_or_authorized():
+            self._tn_log(
+                level="warning",
+                title="Remito no validado automaticamente",
+                message=(
+                    "La orden no figura paga en Tienda Nube (estado de pago '%s'), "
+                    "asi que la entrega no se valida sola."
+                )
+                % (self.payment_status_tn or ""),
+            )
+            return False
+
+        force_without_stock = company.tn_auto_validate_without_stock
+        validated = self.env["stock.picking"]
+        # En rutas de varios pasos hay que validar en cadena: el OUT recien se puede
+        # reservar cuando el picking interno esta hecho. Cada vuelta valida lo que ya se
+        # pueda; si una vuelta no avanza, insistir no cambia nada.
+        for _attempt in range(5):
+            pending = self.picking_ids.filtered(lambda picking: picking.state not in ("done", "cancel"))
+            if not pending:
+                break
+            progress = self.env["stock.picking"]
+            for picking in pending.sorted(key=lambda p: (p.picking_type_id.code != "internal", p.id)):
+                if self._tn_auto_validate_picking(picking, force_without_stock):
+                    progress |= picking
+            validated |= progress
+            if not progress:
+                break
+
+        self._tn_log_pending_pickings()
+        return validated
+
+    def _tn_auto_validate_picking(self, picking, force_without_stock):
+        """Valida un remito dentro de un savepoint.
+
+        El propio button_validate encadena factura, pago y conciliacion: si algo de eso
+        falla, el savepoint deshace tambien la validacion, para no quedar con la entrega
+        hecha y la facturacion a medias, y sin arrastrar la sincronizacion de la orden."""
+        self.ensure_one()
+        picking_name = picking.name
+        try:
+            with self.env.cr.savepoint():
+                validated = picking._tn_try_auto_validate(force_without_stock)
+        except Exception as err:
+            self._tn_log(
+                level="error",
+                title="Error al validar remito automaticamente",
+                message="No se pudo validar %s." % picking_name,
+                error_tn=str(err),
+            )
+            return False
+
+        if validated:
+            self._tn_log(
+                level="success",
+                title="Remito validado automaticamente",
+                message="Se valido %s y se disparo la facturacion automatica." % picking_name,
+            )
+        return validated
+
+    def _tn_log_pending_pickings(self):
+        """Avisa en la venta que quedaron entregas sin validar (lo habitual: falta stock)."""
+        self.ensure_one()
+        pending = self.picking_ids.filtered(lambda picking: picking.state not in ("done", "cancel"))
+        if not pending:
+            return False
+        message = (
+            "Quedaron entregas sin validar automaticamente: %s. "
+            "Lo habitual es que no haya stock reservado suficiente. "
+            "Validalas a mano para que se genere la factura."
+        ) % ", ".join(pending.mapped("name"))
+        self._tn_log(
+            level="warning",
+            title="Entregas pendientes de validar",
+            message=message,
+        )
+        self.message_post(body=message)
+        return True
 
     def _tn_is_paid_or_authorized(self):
         self.ensure_one()

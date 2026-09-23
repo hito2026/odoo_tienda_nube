@@ -10,6 +10,7 @@
         - Genera el pago automatico segun el mapeo metodo TN -> diario Odoo.
         - Concilia el pago con la factura y marca la orden como completa.
         - Registra warnings cuando falta el mapeo o cuando la conciliacion requiere intervencion manual.
+        - Opcionalmente valida el remito automaticamente al confirmarse la orden, lo que encadena factura y pago.
 
         Uso:
         1. Configurar el mapeo de metodos de pago en Tienda Nube > Configuracion.
@@ -17,7 +18,7 @@
         3. Validar el picking de salida para disparar la facturacion y el cobro.
     """,
     "category": "Sale",
-    "version": "19.0.1.1.1",
+    "version": "19.0.1.2.0",
     "author": "Hitofusion",
     "website": "https://devoo.io",
     "license": "LGPL-3",
@@ -25,6 +26,7 @@
         "odoo_tienda_nube",
         "sale_management",
         "stock",
+        "sale_stock",
         "account",
     ],
     "data": [

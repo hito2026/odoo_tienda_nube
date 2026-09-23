@@ -9,6 +9,8 @@
                 <separator string="Facturacion y Pagos Automaticos TN"/>
                 <field name="tn_auto_invoice_trigger" widget="radio"/>
                 <field name="tn_invoice_journal_id"/>
+                <field name="tn_auto_validate_picking"/>
+                <field name="tn_auto_validate_without_stock" invisible="not tn_auto_validate_picking"/>
             </xpath>
         </field>
     </record>

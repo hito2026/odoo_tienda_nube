@@ -1,5 +1,11 @@
 # Changelog
 
+## 19.0.1.2.0 - 2026-09-23
+
+### Added
+- Validacion automatica del remito al confirmarse la orden TN (`tn_auto_validate_picking`), que encadena factura, pago y conciliacion sin intervencion manual. Valida la cadena completa en rutas de varios pasos y solo si Tienda Nube informa el pago como paid o authorized.
+- Opcion `tn_auto_validate_without_stock`: por defecto no se valida si los movimientos no estan completamente reservados y queda el aviso en la venta; activandola se valida igual y el stock puede quedar en negativo.
+
 ## 19.0.1.1.1 - 2026-09-10
 
 ### Fixed
