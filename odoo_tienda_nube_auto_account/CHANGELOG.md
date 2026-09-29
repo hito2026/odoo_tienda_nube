@@ -1,5 +1,13 @@
 # Changelog
 
+## 19.0.1.2.1 - 2026-09-29
+
+### Fixed
+- `InvalidSavepointSpecification` / `InFailedSqlTransaction` al importar ordenes con validacion automatica del remito: la factura se publicaba dentro del savepoint del remito y el commit de ARCA (`l10n_ar_edi`) borraba el savepoint. Ahora el savepoint cubre solo la validacion del stock y la facturacion corre despues, fuera de el.
+- La factura se publica con `l10n_ar_invoice_skip_commit` dentro de su propio savepoint: si ARCA la rechaza queda en borrador con el error en el log y el chatter (antes el rechazo deshacia toda la orden importada); con CAE se hace commit para no perderlo.
+- Una factura TN que habia quedado en borrador no se volvia a intentar publicar.
+- Creacion de factura, pago, conciliacion y confirmacion automatica van en savepoints, para que un error no deje la transaccion abortada.
+
 ## 19.0.1.2.0 - 2026-09-23
 
 ### Added

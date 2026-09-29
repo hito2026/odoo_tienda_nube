@@ -1,5 +1,10 @@
 # Changelog — Tienda Nube ⇆ Odoo Connector
 
+## [19.0.0.1.3] - 2026-09-29
+### Fixed
+- La importacion de ordenes (por fecha, todas y cron) procesa cada orden en su propia transaccion: un error en una orden queda en el log y no corta ni deshace las demas.
+- El webhook hace rollback antes de liberar el lock ante un error; antes, con la transaccion abortada, el lock quedaba 'En uso' y rebotaba los webhooks siguientes con 429.
+
 ## [19.0.0.0.3] - 2026-02-11
 ### Changed
 - Cambio en el name del page TN en sale.order

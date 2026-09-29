@@ -848,9 +848,7 @@ class TiendaNubeResCompanyInherit(models.Model):
             data = response.json()
             # Segun respuesta crearmos ordenes en nuestro modelo sale.order
             for order in data:
-                order_odoo = self.env['sale.order'].with_company(self)._tn_find_or_create(order['id'])
-                if order_odoo.state == 'draft':
-                    order_odoo.with_company(self).create_order_from_tn()
+                self.env['sale.order']._tn_import_order(order['id'], self)
         else:
             # Creamos log de TN
             self.env['tn.log'].create_log(
@@ -880,9 +878,7 @@ class TiendaNubeResCompanyInherit(models.Model):
                 if not data:
                     break
                 for order in data:
-                    order_odoo = self.env['sale.order'].with_company(self)._tn_find_or_create(order['id'])
-                    if order_odoo.state == 'draft':
-                        order_odoo.with_company(self).create_order_from_tn()
+                    self.env['sale.order']._tn_import_order(order['id'], self)
                 if len(data) < 200:
                     break
                 page += 1

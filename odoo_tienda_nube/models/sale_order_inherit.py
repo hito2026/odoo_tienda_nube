@@ -383,6 +383,36 @@ class SaleOrderTiendaNubeInherit(models.Model):
             str(error) if error else False,
         )
 
+    @api.model
+    def _tn_import_order(self, id_tn, company):
+        """Importa una orden de TN en su propia transaccion, para los procesos masivos.
+
+        Cada orden termina en commit: la facturacion electronica ya hace commit por su
+        cuenta al obtener el CAE, y asi un error en una orden (que puede dejar la
+        transaccion abortada) se deshace solo a ella, queda en el log y no corta la
+        importacion de las siguientes."""
+        order_id = False
+        try:
+            order = self.with_company(company)._tn_find_or_create(id_tn)
+            order_id = order.id
+            if order.state == 'draft':
+                order.with_company(company).create_order_from_tn()
+            self.env.cr.commit()  # pylint: disable=invalid-commit
+            return True
+        except Exception as err:
+            self.env.cr.rollback()
+            _logger.exception("Error al importar la orden TN %s", id_tn)
+            self.env['tn.log'].sudo().create_log(
+                'Error al importar orden de Tienda Nube',
+                'Orden TN id %s: %s' % (id_tn, err),
+                'sale.order',
+                order_id,
+                'error',
+                traceback.format_exc(),
+            )
+            self.env.cr.commit()  # pylint: disable=invalid-commit
+            return False
+
     # Metodo para crear la orden en Odoo desde TN GET /orders/{id}
     def create_order_from_tn(self):
         if self.state != 'draft':

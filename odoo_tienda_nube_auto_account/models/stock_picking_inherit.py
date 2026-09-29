@@ -96,6 +96,9 @@ class StockPickingTnAutoAccount(models.Model):
 
     def button_validate(self):
         result = super().button_validate()
+        # Validacion automatica TN: factura _tn_auto_validate_pickings, fuera del savepoint.
+        if self.env.context.get("tn_skip_auto_billing"):
+            return result
 
         for picking in self:
             if picking.state != "done":

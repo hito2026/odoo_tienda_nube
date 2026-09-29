@@ -184,6 +184,10 @@ class TiendaNubeWebHook(http.Controller):
                         status=404
                     )
         except Exception as e:
+            # Si el error dejo la transaccion abortada, liberar el lock fallaria y quedaria
+            # 'En uso' (ya commiteado), rebotando todos los webhooks siguientes con 429.
+            _logger.exception("Error al procesar webhook de Tienda Nube")
+            request.env.cr.rollback()
             request.env['ir.config_parameter'].sudo().set_param(lock_name, 'Disponible')
             return request.make_response(
                 json.dumps({"mensaje": "Error al procesar la solicitud"}),

@@ -4,7 +4,7 @@ import logging
 
 from datetime import date, datetime
 
-from odoo import fields, models
+from odoo import fields, models, modules
 from odoo.tools import float_is_zero
 
 _logger = logging.getLogger(__name__)
@@ -44,7 +44,12 @@ class SaleOrderTnAutoAccount(models.Model):
             if not order._tn_is_paid_or_authorized():
                 continue
             try:
-                order.action_confirm()
+                # Savepoint para que un error en la confirmacion no deje la transaccion
+                # abortada (el log de abajo no podria escribirse). Si algo factura al
+                # confirmar (ej. automatizacion por tipo de venta), sin skip_commit el
+                # commit de ARCA borraria el savepoint.
+                with self.env.cr.savepoint():
+                    order.with_context(l10n_ar_invoice_skip_commit=True).action_confirm()
                 order._tn_log(
                     level="success",
                     title="Orden confirmada automaticamente",
@@ -98,20 +103,30 @@ class SaleOrderTnAutoAccount(models.Model):
             if not progress:
                 break
 
+        # La facturacion va recien ahora, fuera de los savepoints de los remitos: al
+        # publicar la factura ARCA hace commit, y con un savepoint abierto el RELEASE
+        # falla y deja la transaccion abortada.
+        if any(picking._tn_should_trigger_auto_flow(self) for picking in validated):
+            self._tn_run_auto_billing_and_payment()
+
         self._tn_log_pending_pickings()
         return validated
 
     def _tn_auto_validate_picking(self, picking, force_without_stock):
-        """Valida un remito dentro de un savepoint.
+        """Valida un remito dentro de un savepoint, sin facturar.
 
-        El propio button_validate encadena factura, pago y conciliacion: si algo de eso
-        falla, el savepoint deshace tambien la validacion, para no quedar con la entrega
-        hecha y la facturacion a medias, y sin arrastrar la sincronizacion de la orden."""
+        La facturacion la dispara _tn_auto_validate_pickings despues, fuera del savepoint:
+        una factura con CAE no se puede deshacer (ARCA ya la tiene) y ademas ARCA hace
+        commit al publicarla, lo que invalida cualquier savepoint abierto. skip_commit es
+        por si otro modulo factura igual dentro de la validacion."""
         self.ensure_one()
         picking_name = picking.name
         try:
             with self.env.cr.savepoint():
-                validated = picking._tn_try_auto_validate(force_without_stock)
+                validated = picking.with_context(
+                    tn_skip_auto_billing=True,
+                    l10n_ar_invoice_skip_commit=True,
+                )._tn_try_auto_validate(force_without_stock)
         except Exception as err:
             self._tn_log(
                 level="error",
@@ -125,7 +140,7 @@ class SaleOrderTnAutoAccount(models.Model):
             self._tn_log(
                 level="success",
                 title="Remito validado automaticamente",
-                message="Se valido %s y se disparo la facturacion automatica." % picking_name,
+                message="Se valido %s." % picking_name,
             )
         return validated
 
@@ -364,25 +379,38 @@ class SaleOrderTnAutoAccount(models.Model):
         return self._tn_ensure_payment_mapping_stub()
 
     def _tn_create_invoice_if_needed(self):
+        """Devuelve la factura de la orden, creandola y publicandola si hace falta.
+
+        Si ya hay una en borrador (ej. ARCA la rechazo en un intento anterior) se vuelve a
+        intentar publicarla. Devuelve la factura aunque haya quedado en borrador; el pago
+        solo se genera sobre facturas publicadas."""
         self.ensure_one()
 
         invoices = self.invoice_ids.filtered(lambda move: move.move_type == "out_invoice" and move.state != "cancel")
         if invoices:
             invoice = invoices.sorted(lambda mv: (mv.invoice_date or fields.Date.today(), mv.id), reverse=True)[:1]
-            return invoice
+        else:
+            try:
+                with self.env.cr.savepoint():
+                    created_invoices = self._create_invoices(final=True)
+            except Exception as err:
+                self._tn_log(
+                    level="error",
+                    title="Error al crear factura automatica",
+                    message="No se pudo crear la factura de la orden %s." % self.name,
+                    error_tn=str(err),
+                )
+                return False
+            invoice = created_invoices.filtered(lambda move: move.move_type == "out_invoice")[:1]
+            if not invoice:
+                return False
 
-        created_invoices = self._create_invoices(final=True)
-        invoice = created_invoices.filtered(lambda move: move.move_type == "out_invoice")[:1] if created_invoices else False
-        if not invoice:
-            invoices = self.invoice_ids.filtered(lambda move: move.move_type == "out_invoice" and move.state != "cancel")
-            invoice = invoices[:1] if invoices else False
-
-        if invoice:
-            if invoice.state == "draft":
-                company_journal = self.company_id.tn_invoice_journal_id
-                if company_journal and invoice.journal_id != company_journal:
-                    invoice.journal_id = company_journal
-                invoice.action_post()
+        if invoice.state == "draft":
+            company_journal = self.company_id.tn_invoice_journal_id
+            if company_journal and invoice.journal_id != company_journal:
+                invoice.journal_id = company_journal
+            if not self._tn_post_invoice(invoice):
+                return invoice
             self._tn_log(
                 level="success",
                 title="Factura creada automaticamente",
@@ -390,6 +418,39 @@ class SaleOrderTnAutoAccount(models.Model):
             )
 
         return invoice
+
+    def _tn_post_invoice(self, invoice):
+        """Publica la factura sin dejar la transaccion rota si ARCA la rechaza.
+
+        l10n_ar_edi hace commit al recibir el CAE y rollback + commit si ARCA rechaza, lo
+        que invalida cualquier savepoint abierto y, en el rechazo, deshace toda la orden
+        importada. Con skip_commit publicamos dentro de un savepoint: un rechazo solo
+        deshace la publicacion (la factura queda en borrador) y, si hay CAE, hacemos el
+        commit nosotros para que quede guardado, como haria l10n_ar_edi."""
+        self.ensure_one()
+        try:
+            with self.env.cr.savepoint():
+                invoice.with_context(l10n_ar_invoice_skip_commit=True).action_post()
+        except Exception as err:
+            message = "No se pudo publicar la factura de la orden %s; quedo en borrador." % self.name
+            self._tn_log(
+                level="error",
+                title="Error al publicar factura automatica",
+                message=message,
+                error_tn=str(err),
+            )
+            self.message_post(body="%s Detalle: %s" % (message, err))
+            return False
+
+        # Si quien nos llama pidio skip_commit (ej. esta dentro de su propio savepoint), el
+        # commit queda a su cargo.
+        if (
+            invoice.state == "posted"
+            and not self.env.context.get("l10n_ar_invoice_skip_commit")
+            and not modules.module.current_test
+        ):
+            self.env.cr.commit()  # pylint: disable=invalid-commit
+        return invoice.state == "posted"
 
     def _tn_payment_memo_field(self):
         """Campo de referencia del pago: `memo` desde Odoo 18, `ref` en versiones previas."""
@@ -482,8 +543,18 @@ class SaleOrderTnAutoAccount(models.Model):
             "company_id": self.company_id.id,
         }
 
-        payment = self.env["account.payment"].create(payment_vals)
-        payment.action_post()
+        try:
+            with self.env.cr.savepoint():
+                payment = self.env["account.payment"].create(payment_vals)
+                payment.action_post()
+        except Exception as err:
+            self._tn_log(
+                level="error",
+                title="Error al crear pago automatico",
+                message="No se pudo crear el pago de la factura %s." % (invoice.name or invoice.id),
+                error_tn=str(err),
+            )
+            return False
 
         self._tn_log(
             level="success",
@@ -499,17 +570,18 @@ class SaleOrderTnAutoAccount(models.Model):
             return False
 
         try:
-            invoice_lines = invoice.line_ids.filtered(
-                lambda line: line.account_id.account_type == "asset_receivable" and not line.reconciled
-            )
-            payment_lines = payment.move_id.line_ids.filtered(
-                lambda line: line.account_id.account_type == "asset_receivable" and not line.reconciled
-            )
+            with self.env.cr.savepoint():
+                invoice_lines = invoice.line_ids.filtered(
+                    lambda line: line.account_id.account_type == "asset_receivable" and not line.reconciled
+                )
+                payment_lines = payment.move_id.line_ids.filtered(
+                    lambda line: line.account_id.account_type == "asset_receivable" and not line.reconciled
+                )
 
-            for account in invoice_lines.mapped("account_id"):
-                lines_to_reconcile = (invoice_lines + payment_lines).filtered(lambda line: line.account_id == account)
-                if lines_to_reconcile:
-                    lines_to_reconcile.reconcile()
+                for account in invoice_lines.mapped("account_id"):
+                    lines_to_reconcile = (invoice_lines + payment_lines).filtered(lambda line: line.account_id == account)
+                    if lines_to_reconcile:
+                        lines_to_reconcile.reconcile()
 
             self._tn_log(
                 level="success",
@@ -546,6 +618,8 @@ class SaleOrderTnAutoAccount(models.Model):
                     title="No se pudo crear factura automatica",
                     message="No se genero factura para la orden %s." % (order.name),
                 )
+                continue
+            if invoice.state != "posted":
                 continue
 
             payment = order._tn_create_payment_for_invoice(invoice)
