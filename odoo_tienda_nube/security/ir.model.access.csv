@@ -18,3 +18,4 @@ access_mass_synchronize_products_wizard_line_manager,mass_synchronize_products_w
 access_product_image_tn,product_image_tn,model_product_image_tn,base.group_user,1,1,1,1
 access_create_orders_by_date_wizard,create_orders_by_date_wizard,model_create_orders_by_date_wizard,base.group_user,1,1,1,1
 access_test_connection_tn_wizard,test_connection_tn_wizard,model_test_connection_tn_wizard,base.group_user,1,1,1,1
+access_tn_shipping_label,tn_shipping_label,model_tn_shipping_label,base.group_user,1,1,1,1

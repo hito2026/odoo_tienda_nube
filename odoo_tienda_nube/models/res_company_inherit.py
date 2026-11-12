@@ -203,6 +203,45 @@ class TiendaNubeResCompanyInherit(models.Model):
             "User-Agent": "Odoo by Devoo",
         }
 
+    def _tn_labels_request(self, method, path, **kwargs):
+        """Llamada a la API de etiquetas de envío (Labels API) de Tienda Nube.
+
+        En una base neutralizada (staging) las etiquetas se pueden habilitar solas con
+        el parámetro odoo_tienda_nube.labels_allow_neutralized = True, sin reactivar
+        el resto de la sincronización (stock, precios). OJO: igual operan sobre la
+        tienda real.
+        """
+        self.ensure_one()
+        if self._tn_sync_disabled():
+            allow = self.env['ir.config_parameter'].sudo().get_param(
+                'odoo_tienda_nube.labels_allow_neutralized', 'False')
+            if str(allow).strip().lower() not in ('true', '1', 'yes'):
+                raise ValidationError(_(
+                    'Etiquetas de Tienda Nube deshabilitadas: la base de datos está neutralizada. '
+                    'Para probarlas, crear el parámetro del sistema '
+                    'odoo_tienda_nube.labels_allow_neutralized = True.'))
+        token = (self.tiendanube_access_token or '').strip()
+        if not token or not self.tiendanube_id:
+            raise ValidationError(_('La empresa %s no tiene configurado el ID o el token de Tienda Nube.') % self.name)
+
+        headers = {
+            # La Labels API documenta Authorization; el resto de la API usa Authentication
+            "Authorization": "Bearer " + token,
+            "Authentication": "bearer " + token,
+            "Content-Type": "application/json",
+            "User-Agent": "Odoo Hitofusion (soporte@hitofusion.com)",
+        }
+        url = "https://api.tiendanube.com/v1/%s%s" % (self.tiendanube_id, path)
+        response = requests.request(method, url, headers=headers, timeout=60, **kwargs)
+        if response.status_code == 403:
+            raise ValidationError(_(
+                'Tienda Nube rechazó la operación (403): la tienda no tiene habilitada la API de '
+                'etiquetas (solo Tiendanube Next). Respuesta: %s') % response.text[:300])
+        if response.status_code >= 400:
+            raise ValidationError(_('Tienda Nube respondió %s en %s %s: %s') % (
+                response.status_code, method, path, response.text[:500]))
+        return response.json() if response.content else None
+
     #Creamos productos de TN en Odoo
     def create_products_in_odoo(self):
         #Primero creamos todas las categorias en Odoo
