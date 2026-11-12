@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="view_tn_shipping_label_tree" model="ir.ui.view">
+        <field name="name">tn.shipping.label.tree</field>
+        <field name="model">tn.shipping.label</field>
+        <field name="arch" type="xml">
+            <tree create="false" decoration-success="status in ('READY_TO_USE', 'DOWNLOADED')"
+                  decoration-danger="status in ('FAILED', 'CANCELED')" decoration-muted="status == 'SUSPENDED'">
+                <field name="create_date" string="Solicitada"/>
+                <field name="sale_order_id"/>
+                <field name="status" widget="badge"
+                       decoration-success="status in ('READY_TO_USE', 'DOWNLOADED')"
+                       decoration-danger="status in ('FAILED', 'CANCELED')"
+                       decoration-info="status in ('STARTED', 'IN_PROGRESS', 'READY_TO_DOWNLOAD')"/>
+                <field name="tracking_code"/>
+                <field name="tracking_url" widget="url"/>
+                <field name="reason" optional="show"/>
+                <field name="attachment_id" optional="hide"/>
+                <field name="fulfillment_order_id" optional="hide"/>
+                <field name="label_id" optional="hide"/>
+                <field name="company_id" optional="hide" groups="base.group_multi_company"/>
+                <button name="action_download" type="object" string="Descargar" icon="fa-download"
+                        invisible="status not in ('READY_TO_USE', 'DOWNLOADED')"/>
+            </tree>
+        </field>
+    </record>
+
+    <record id="view_tn_shipping_label_search" model="ir.ui.view">
+        <field name="name">tn.shipping.label.search</field>
+        <field name="model">tn.shipping.label</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="sale_order_id"/>
+                <field name="tracking_code"/>
+                <filter name="pending" string="En proceso" domain="[('status', 'in', ('STARTED', 'IN_PROGRESS', 'READY_TO_DOWNLOAD'))]"/>
+                <filter name="ready" string="Listas sin descargar" domain="[('status', '=', 'READY_TO_USE')]"/>
+                <filter name="failed" string="Fallidas" domain="[('status', 'in', ('FAILED', 'CANCELED'))]"/>
+                <group expand="0" string="Agrupar por">
+                    <filter name="group_status" string="Estado" context="{'group_by': 'status'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_open_shipping_labels_tn" model="ir.actions.act_window">
+        <field name="name">Etiquetas de envío</field>
+        <field name="res_model">tn.shipping.label</field>
+        <field name="view_mode">tree</field>
+    </record>
+
+    <menuitem id="menu_shipping_labels_tn" name="Etiquetas de envío" parent="menu_tn" sequence="1"
+              action="action_open_shipping_labels_tn"/>
+
+    <record id="view_sale_order_tn_shipping_label" model="ir.ui.view">
+        <field name="name">sale.order.tn.shipping.label</field>
+        <field name="model">sale.order</field>
+        <field name="inherit_id" ref="odoo_tienda_nube.view_sale_order_tienda_nube_inherit"/>
+        <field name="arch" type="xml">
+            <xpath expr="//page[@name='tienda_nube_page']/button[@name='create_order_from_tn']" position="after">
+                <button name="action_tn_create_label" string="Generar etiqueta de envío" type="object"
+                        class="btn-secondary ms-2" icon="fa-truck"
+                        invisible="not id_tn or state not in ('sale', 'done')"
+                        confirm="Se va a solicitar la etiqueta al transportista en Tienda Nube (puede tener costo). ¿Continuar?"/>
+                <button name="action_tn_refresh_labels" string="Actualizar / descargar etiquetas" type="object"
+                        class="btn-secondary ms-2" icon="fa-refresh" invisible="not tn_label_count"/>
+            </xpath>
+            <xpath expr="//page[@name='tienda_nube_page']/group[1]" position="before">
+                <field name="tn_label_count" invisible="1"/>
+                <group string="Etiquetas de envío" invisible="not tn_label_count">
+                    <field name="tn_label_ids" nolabel="1" colspan="2" readonly="1"
+                           context="{'tree_view_ref': 'odoo_tienda_nube.view_tn_shipping_label_tree'}"/>
+                </group>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="ir_cron_refresh_shipping_labels_tn" model="ir.cron">
+        <field name="name">Tienda Nube: actualizar y descargar etiquetas de envío</field>
+        <field name="model_id" ref="model_tn_shipping_label"/>
+        <field name="state">code</field>
+        <field name="code">model.cron_refresh_labels()</field>
+        <field name="interval_number">10</field>
+        <field name="interval_type">minutes</field>
+        <field name="numbercall">-1</field>
+        <field name="active" eval="True"/>
+        <field name="user_id" ref="base.user_root"/>
+    </record>
+
+</odoo>
