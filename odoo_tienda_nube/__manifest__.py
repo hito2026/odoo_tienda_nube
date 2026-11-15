@@ -22,7 +22,7 @@
         "data/cron_sync_orders_today_tn.xml",
         "data/product_shipping_tn.xml",
         "security/security.xml",
-        "security/ir.model.access.csv",
+        "security/ir.access.csv",
         "security/multi_company_rules.xml",
         "wizards/create_all_products_odoo_views.xml",
         "wizards/create_all_category_odoo_views.xml",
