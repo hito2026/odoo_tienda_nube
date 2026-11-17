@@ -3,7 +3,7 @@
         <record model="ir.ui.view" id="view_tn_product_product_inherit">
             <field name="name">tn.product.product.inherit.form</field>
             <field name="model">product.product</field>
-            <field name="inherit_id" ref="product.product_variant_easy_edit_view"/>
+            <field name="inherit_id" ref="product.product_normal_form_view"/>
             <field name="arch" type="xml">
 
                 <xpath expr="//field[@name='barcode']" position="after">
