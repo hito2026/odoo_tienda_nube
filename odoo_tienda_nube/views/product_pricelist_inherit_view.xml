@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Lista de precios: columna de precio promocional TN en las reglas (solo en la lista de Tienda Nube) -->
+    <record id="product_pricelist_view_inherit_tn" model="ir.ui.view">
+        <field name="name">product.pricelist.form.inherit.tn</field>
+        <field name="model">product.pricelist</field>
+        <field name="inherit_id" ref="product.product_pricelist_view"/>
+        <field name="arch" type="xml">
+            <xpath expr="//sheet" position="inside">
+                <field name="tn_is_tn_pricelist" invisible="1"/>
+            </xpath>
+            <xpath expr="//field[@name='item_ids']/tree[@groups='!product.group_sale_pricelist']/field[@name='fixed_price']" position="after">
+                <field name="tn_promotional_price" column_invisible="not parent.tn_is_tn_pricelist"/>
+            </xpath>
+            <xpath expr="//field[@name='item_ids']/tree[@groups='product.group_sale_pricelist']/field[@name='price']" position="after">
+                <field name="tn_promotional_price" column_invisible="not parent.tn_is_tn_pricelist"/>
+            </xpath>
+        </field>
+    </record>
+
+    <!-- Formulario de la regla -->
+    <record id="product_pricelist_item_form_view_inherit_tn" model="ir.ui.view">
+        <field name="name">product.pricelist.item.form.inherit.tn</field>
+        <field name="model">product.pricelist.item</field>
+        <field name="inherit_id" ref="product.product_pricelist_item_form_view"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='fixed_price']" position="after">
+                <field name="tn_is_tn_pricelist" invisible="1"/>
+                <field name="tn_promotional_price"
+                       widget="monetary"
+                       options="{'field_digits': True}"
+                       invisible="compute_price != 'fixed' or not tn_is_tn_pricelist"/>
+            </xpath>
+        </field>
+    </record>
+
+    <!-- Reglas vistas desde el producto / variante -->
+    <record id="product_pricelist_item_tree_view_from_product_inherit_tn" model="ir.ui.view">
+        <field name="name">product.pricelist.item.tree.from.product.inherit.tn</field>
+        <field name="model">product.pricelist.item</field>
+        <field name="inherit_id" ref="product.product_pricelist_item_tree_view_from_product"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='fixed_price']" position="after">
+                <field name="tn_is_tn_pricelist" column_invisible="True"/>
+                <field name="tn_promotional_price" optional="show" readonly="not tn_is_tn_pricelist"/>
+            </xpath>
+        </field>
+    </record>
+
+    <!-- Listado general de reglas -->
+    <record id="product_pricelist_item_tree_view_inherit_tn" model="ir.ui.view">
+        <field name="name">product.pricelist.item.tree.inherit.tn</field>
+        <field name="model">product.pricelist.item</field>
+        <field name="inherit_id" ref="product.product_pricelist_item_tree_view"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='price']" position="after">
+                <field name="tn_promotional_price" optional="show"/>
+            </xpath>
+        </field>
+    </record>
+</odoo>

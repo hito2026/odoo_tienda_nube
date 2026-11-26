@@ -1,6 +1,7 @@
 import logging
 from odoo import _, api, fields, models
 from odoo.exceptions import ValidationError
+from .product_pricelist_inherit import TN_SKIP_PROMO_SYNC
 
 _logger = logging.getLogger(__name__)
 
@@ -32,6 +33,37 @@ class TiendaNubeProductProductInherit(models.Model):
         ('male', 'Masculino'),
         ('female', 'Femenino'),
     ], string='Sexo', help="Sexo en Tienda Nube", default='unisex')
+
+    def write(self, vals):
+        res = super().write(vals)
+        if 'precio_promocional_tn' in vals and not self.env.context.get(TN_SKIP_PROMO_SYNC):
+            self._tn_sync_promo_to_pricelist()
+        return res
+
+    def _tn_sync_promo_to_pricelist(self):
+        """Variante -> regla: si la variante tiene regla de precio fijo en la Lista de Precios Tienda Nube,
+        actualiza su precio promocional. Se busca primero la regla por variante; si no hay y la plantilla
+        tiene una sola variante, la regla por plantilla. Sin regla no se crea nada."""
+        tn_pricelists = self.env['product.pricelist']._tn_get_tn_pricelists()
+        if not tn_pricelists:
+            return
+        Item = self.env['product.pricelist.item'].sudo()
+        base_domain = Item._tn_promo_rule_domain(tn_pricelists)
+        for variant in self:
+            items = Item.search(base_domain + [
+                ('applied_on', '=', '0_product_variant'),
+                ('product_id', '=', variant.id),
+            ])
+            if not items and len(variant.product_tmpl_id.with_context(active_test=False).product_variant_ids) == 1:
+                items = Item.search(base_domain + [
+                    ('applied_on', '=', '1_product'),
+                    ('product_tmpl_id', '=', variant.product_tmpl_id.id),
+                ])
+            items = items.filtered(lambda i: i.tn_promotional_price != variant.precio_promocional_tn)
+            if items:
+                items.with_context(**{TN_SKIP_PROMO_SYNC: True}).write({
+                    'tn_promotional_price': variant.precio_promocional_tn,
+                })
 
     # Sobreescribimos unlink para que no se pueda borrar producto de descuento y envio de Tienda Nube
     def unlink(self):
