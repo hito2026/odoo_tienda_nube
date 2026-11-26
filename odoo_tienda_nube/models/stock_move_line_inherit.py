@@ -15,12 +15,13 @@ class stock_move_line_inherit_tn(models.Model):
         return res
 
     # Create
-    @api.model
-    def create(self, vals):
-        res = super(stock_move_line_inherit_tn, self).create(vals)
-        if res.company_id.tn_config_stock_realtime:
-            res.actualizar_stock_tn()
-        return res
+    @api.model_create_multi
+    def create(self, vals_list):
+        records = super(stock_move_line_inherit_tn, self).create(vals_list)
+        for rec in records:
+            if rec.company_id.tn_config_stock_realtime:
+                rec.actualizar_stock_tn()
+        return records
 
     def actualizar_stock_tn(self):
         if self.env['res.company']._tn_sync_disabled():

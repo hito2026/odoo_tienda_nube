@@ -252,7 +252,7 @@ class TiendaNubeResCompanyInherit(models.Model):
                 index = 0 # Flag para recorrer los valores de las variantes ya que vinen ordenados segun el orden de los atributos
                 for attribute in product['attributes']:
                     #Buscamos si existe el atributo
-                    attribute_odoo = self.env['product.attribute'].search([('name', '=', attribute['es'])])
+                    attribute_odoo = self.env['product.attribute'].search([('name', '=', attribute['es'])], limit=1)
                     if not attribute_odoo:
                         #Creamos atributo
                         attribute_odoo = self.env['product.attribute'].create({
@@ -262,7 +262,7 @@ class TiendaNubeResCompanyInherit(models.Model):
                     ids_vales = []
                     for variant in product['variants']:
 
-                        value_attribute_odoo = self.env['product.attribute.value'].search([('name', '=', variant['values'][index]['es']),('attribute_id', '=', attribute_odoo.id)])
+                        value_attribute_odoo = self.env['product.attribute.value'].search([('name', '=', variant['values'][index]['es']),('attribute_id', '=', attribute_odoo.id)], limit=1)
                         if not value_attribute_odoo:
                             #Creamos valor
                             value_attribute_odoo = self.env['product.attribute.value'].create({
@@ -923,9 +923,7 @@ class TiendaNubeResCompanyInherit(models.Model):
             data = response.json()
             # Segun respuesta crearmos ordenes en nuestro modelo sale.order
             for order in data:
-                order_odoo = self.env['sale.order'].with_company(self)._tn_find_or_create(order['id'])
-                if order_odoo.state == 'draft':
-                    order_odoo.with_company(self).create_order_from_tn()
+                self.env['sale.order']._tn_import_order(order['id'], self)
         else:
             # Creamos log de TN
             self.env['tn.log'].create_log(
