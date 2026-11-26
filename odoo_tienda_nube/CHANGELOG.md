@@ -1,5 +1,25 @@
 # Changelog — Tienda Nube ⇆ Odoo Connector
 
+## [17.0.6.3.0] - 2026-11-26
+Paridad con 19.0.
+### Added
+- Asistente "Importar Órdenes por Fecha" y cron cada 2 horas que trae las órdenes de ayer y hoy.
+- Impuestos forzados por compañía para las líneas TN (`tn_force_tax_ids`).
+- Búsqueda de contactos por documento normalizado y por email; el contacto se crea aunque la localización rechace el documento (queda un aviso en la venta). Hooks para la localización y módulo `odoo_tienda_nube_l10n_ar`.
+- Grupo "Tienda Nube" para el menú y reglas multi-compañía en categorías, cupones y webhooks.
+### Fixed
+- Cada orden de la importación masiva va en su propia transacción; un producto que no está en Odoo se omite y queda en el log.
+- El webhook hace rollback antes de liberar el lock (evita 429 en cadena).
+- El batch de precios solo envía las promos que cambiaron (`tn_promotional_price_sent`): no pisa promos cargadas en el admin de TN ni hace un request por producto.
+- Las líneas de descuento llevan impuestos y todos los importes TN se convierten con los impuestos efectivos de la línea (modo "Incluido" sin duplicar IVA).
+
+## [17.0.6.2.0] - 2026-11-26
+### Added
+- Precio promocional TN en las reglas de la lista de precios de Tienda Nube, sincronizado con la variante.
+### Fixed
+- El precio enviado a TN se calcula por variante (aplican reglas por variante).
+- Modo "Incluido": no se duplica el IVA en las órdenes cuando el impuesto no es "incluido en el precio".
+
 ## [17.0.6.0.0] - 2026-01-02
 ### Fixed
 - Se modifica algorimo de actualización de precios para evitar el límite de solicitudes de Tienda Nube al realizar actualizaciones masivas.
