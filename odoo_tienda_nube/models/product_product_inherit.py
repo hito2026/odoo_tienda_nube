@@ -1,6 +1,7 @@
 import logging
 from odoo import _, api, fields, models
 from odoo.exceptions import ValidationError
+from odoo.tools import float_compare
 from .product_pricelist_inherit import TN_SKIP_PROMO_SYNC
 
 _logger = logging.getLogger(__name__)
@@ -12,6 +13,10 @@ class TiendaNubeProductProductInherit(models.Model):
     stock_ilimitado_tn = fields.Boolean('Stock Ilimitado en Tienda Nube', help="Stock Ilimitado en Tienda Nube")
     tn_pausar_stock_producto = fields.Boolean('Pausar sincronización de stock', help="Si esta activo este producto no sincroniza su stock con Tienda Nube (el resto de los datos del producto sigue sincronizando con normalidad)")
     precio_promocional_tn = fields.Float('Precio Promocional Tienda Nube', help="Precio promocional de Tienda Nube")
+    tn_promotional_price_sent = fields.Float(
+        'Precio promocional enviado a TN', copy=False, readonly=True, digits='Product Price',
+        help="Ultimo precio promocional enviado a (o recibido de) Tienda Nube. La actualizacion "
+             "masiva de precios solo manda las promos que cambiaron respecto de este valor.")
 
     #Dimensiones TN
     alto_tn = fields.Float('Alto en CM', help="Alto en Tienda Nube")
@@ -39,6 +44,20 @@ class TiendaNubeProductProductInherit(models.Model):
         if 'precio_promocional_tn' in vals and not self.env.context.get(TN_SKIP_PROMO_SYNC):
             self._tn_sync_promo_to_pricelist()
         return res
+
+    def _tn_promo_pending(self):
+        """True si la promo actual difiere de la ultima enviada a Tienda Nube."""
+        self.ensure_one()
+        digits = self.env['decimal.precision'].precision_get('Product Price')
+        return float_compare(self.precio_promocional_tn or 0.0, self.tn_promotional_price_sent or 0.0,
+                             precision_digits=digits) != 0
+
+    def _tn_mark_promo_sent(self):
+        for variant in self:
+            if variant._tn_promo_pending():
+                variant.sudo().with_context(**{TN_SKIP_PROMO_SYNC: True}).write({
+                    'tn_promotional_price_sent': variant.precio_promocional_tn or 0.0,
+                })
 
     def _tn_sync_promo_to_pricelist(self):
         """Variante -> regla: si la variante tiene regla de precio fijo en la Lista de Precios Tienda Nube,

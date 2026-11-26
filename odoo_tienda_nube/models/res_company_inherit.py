@@ -337,6 +337,7 @@ class TiendaNubeResCompanyInherit(models.Model):
                         'list_price': float(variant['price']) if variant['price'] else 0,
                         'standard_price': float(variant['cost']) if variant['cost'] else 0,
                         'precio_promocional_tn': float(variant['promotional_price']) if variant['promotional_price'] else 0,
+                        'tn_promotional_price_sent': float(variant['promotional_price']) if variant['promotional_price'] else 0,
                         'alto_tn': float(variant['height']),
                         'ancho_tn': float(variant['width']),
                         'profundidad_tn': float(variant['depth']),
@@ -449,6 +450,8 @@ class TiendaNubeResCompanyInherit(models.Model):
                 response = requests.put(url, headers=headers, json=data)
                 if response.status_code != 200:
                     raise ValidationError('Error al actualizar stock de Tienda Nube: %s' % response.text)
+                if 'promotional_price' in data:
+                    variant._tn_mark_promo_sent()
             # Hacemos un commit y procedemos a actulizar stock por warehouse
             self.env.cr.commit()
             # Buscamos los wharehouse que tengan location_id_tn
@@ -546,6 +549,8 @@ class TiendaNubeResCompanyInherit(models.Model):
                 response = requests.put(url, headers=headers, json=data)
                 if response.status_code != 200:
                     raise ValidationError('Error al actualizar precio de Tienda Nube: %s' % response.text)
+                if 'promotional_price' in data:
+                    variant._tn_mark_promo_sent()
 
     def _update_product_price_tn_batch(self, products):
         """Actualiza precios usando PATCH batch (para > 5 variantes)"""
@@ -583,27 +588,49 @@ class TiendaNubeResCompanyInherit(models.Model):
         if self.update_product_tn_promotional_price:
             self._update_product_promotional_price_tn_batch(products)
 
-    def _update_product_promotional_price_tn_batch(self, products, chunk_size=50, max_retries=3):
+    def _update_product_promotional_price_tn_batch(self, products, chunk_size=50, max_retries=4):
+        """Envia la promo por producto con PATCH /products/{id}/variants (stock-price no la acepta).
+
+        Solo viajan las variantes cuya promo cambio desde el ultimo envio
+        (tn_promotional_price_sent). Asi:
+        - quien no usa la promo en Odoo no genera ningun request extra ni pisa las promos que
+          carga directamente en el admin de Tienda Nube;
+        - el cron diario de precios no hace un request por producto para todo el catalogo.
+        Un error en un producto queda en el log y no corta el resto."""
         headers = self.get_headers_tn()
         for product in products:
-            variants = product.product_variant_ids.filtered(lambda x: x.product_id_tn != False)
-            if not product.id_tn or not variants:
+            if not product.id_tn:
+                continue
+            variants = product.product_variant_ids.filtered(
+                lambda v: v.product_id_tn and v._tn_promo_pending())
+            if not variants:
                 continue
             url = "https://api.tiendanube.com/v1/%s/products/%s/variants" % (self.tiendanube_id, product.id_tn)
-            data_variants = [{
-                'id': int(variant.product_id_tn),
-                'promotional_price': self._tn_get_variant_promotional_price(variant),
-            } for variant in variants]
-            for start in range(0, len(data_variants), chunk_size):
-                chunk = data_variants[start:start + chunk_size]
+            for start in range(0, len(variants), chunk_size):
+                chunk = variants[start:start + chunk_size]
+                data_variants = [{
+                    'id': int(variant.product_id_tn),
+                    'promotional_price': self._tn_get_variant_promotional_price(variant),
+                } for variant in chunk]
                 for attempt in range(max_retries + 1):
-                    response = requests.patch(url, headers=headers, json=chunk)
+                    response = requests.patch(url, headers=headers, json=data_variants)
                     if response.status_code != 429 or attempt == max_retries:
                         break
-                    # Rate limit de TN para actualizacion de variantes: esperamos y reintentamos
+                    # Rate limit de TN: esperamos y reintentamos
                     time.sleep(2 ** attempt)
-                if response.status_code != 200:
-                    raise ValidationError('Error al actualizar precio promocional de %s en Tienda Nube: %s' % (product.display_name, response.text))
+                if response.status_code == 200:
+                    chunk._tn_mark_promo_sent()
+                else:
+                    _logger.warning('[TN] Error al actualizar precio promocional de %s: %s',
+                                    product.display_name, response.text)
+                    self.env['tn.log'].create_log(
+                        'Error al actualizar precio promocional en Tienda Nube',
+                        'Producto %s' % product.display_name,
+                        'product.template',
+                        product.id,
+                        'error',
+                        response.text,
+                    )
 
     #Actualizamos stock de productos en TN con PATCH /products/stock-price
     def update_product_stock_tn(self, products, location_id_tn):
@@ -784,6 +811,7 @@ class TiendaNubeResCompanyInherit(models.Model):
             for v in data['variants']:
                 variant = product.product_variant_ids.filtered(lambda x: x.barcode.replace(' ', '') == v['barcode'])
                 variant.product_id_tn = v['id']
+                variant._tn_mark_promo_sent()
                 # Si se contemplan imagenes por variantes, asignamos la imagen correspondiente a la variante
                 if product.contemplar_imagen_variantes_tn and 'images' in data and len(data['images']) > 0:
                     #Modificamos la imagenes de la variante en tienda nube

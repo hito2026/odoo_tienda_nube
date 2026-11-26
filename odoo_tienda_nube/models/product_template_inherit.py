@@ -450,6 +450,7 @@ class TiendaNubeProductTemplateInherit(models.Model):
                         'list_price': float(variant['price']) if variant['price'] else 0,
                         #'standard_price': float(variant['cost']) if variant['cost'] else 0, TODO al estar relacionado con Almacen el costo da error de permisos al actualizar
                         'precio_promocional_tn': float(variant['promotional_price']) if variant['promotional_price'] else 0,
+                        'tn_promotional_price_sent': float(variant['promotional_price']) if variant['promotional_price'] else 0,
                         'alto_tn': float(variant['height']),
                         'ancho_tn': float(variant['width']),
                         'profundidad_tn': float(variant['depth']),
