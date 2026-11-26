@@ -1,5 +1,11 @@
 # Changelog — Tienda Nube ⇆ Odoo Connector
 
+## [17.0.6.4.0] - 2026-11-26
+### Added
+- Umbral porcentual de stock (`tn_stock_threshold_percent`): se publica en TN el stock calculado según la configuración menos ese porcentaje, redondeado hacia abajo a entero.
+- Asistente "Variantes sin match TN ↔ Odoo": lista las variantes de TN sin variante Odoo vinculada con el motivo (sin SKU, SKU inexistente o repetido, ya vinculada) y las variantes Odoo vinculadas a un ID que ya no existe en TN; permite vincular las que coinciden por SKU/código de barras.
+- Opción "Tomar medidas de Inventario" (`tn_dimensions_from_inventory`): copia peso (kg) y, con el módulo `odoo_tienda_nube_product_dimension` (OCA `product_dimension`), largo/ancho/alto (cm) a los campos de TN. Botón para la carga inicial y acción en productos/variantes.
+
 ## [17.0.6.3.0] - 2026-11-26
 Paridad con 19.0.
 ### Added

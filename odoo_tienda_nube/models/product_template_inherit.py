@@ -241,6 +241,9 @@ class TiendaNubeProductTemplateInherit(models.Model):
             if len(archived_variants) == 1:
                 archived_variants.peso_tn = self.peso_tn
 
+    def action_tn_copy_inventory_dimensions(self):
+        return self.with_context(active_test=False).product_variant_ids.action_tn_copy_inventory_dimensions()
+
     # Sobreescribimos unlink para que no se pueda borrar producto de descuento de Tienda Nube
     def unlink(self):
         product_discount_tn = self.env.ref('odoo_tienda_nube.product_discount_tn_product_template')

@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_tn_unmatched_variants_wizard_form" model="ir.ui.view">
+        <field name="name">tn.unmatched.variants.wizard.form</field>
+        <field name="model">tn.unmatched.variants.wizard</field>
+        <field name="arch" type="xml">
+            <form string="Variantes sin match TN ↔ Odoo">
+                <p class="text-muted">
+                    Trae todas las variantes de Tienda Nube y lista las que no tienen una variante de Odoo vinculada,
+                    con el motivo (sin SKU, SKU inexistente o repetido en Odoo, etc.). También lista las variantes de
+                    Odoo vinculadas a un ID que ya no existe en Tienda Nube.
+                </p>
+                <group>
+                    <group>
+                        <field name="company_id" options="{'no_create': True}" groups="base.group_multi_company"/>
+                        <field name="tn_variant_count"/>
+                        <field name="matched_count"/>
+                    </group>
+                    <group>
+                        <field name="tn_unmatched_count"/>
+                        <field name="odoo_orphan_count"/>
+                    </group>
+                </group>
+                <field name="line_ids" nolabel="1" readonly="1">
+                    <tree decoration-success="reason == 'matchable'" decoration-muted="origin == 'odoo'">
+                        <field name="origin"/>
+                        <field name="reason"/>
+                        <field name="tn_name"/>
+                        <field name="tn_sku"/>
+                        <field name="tn_barcode" optional="hide"/>
+                        <field name="tn_product_id" optional="hide"/>
+                        <field name="tn_variant_id"/>
+                        <field name="odoo_product_id"/>
+                        <field name="odoo_product_id_tn" optional="hide"/>
+                    </tree>
+                </field>
+                <footer>
+                    <button name="action_analyze" string="Analizar" type="object" class="btn-primary"/>
+                    <button name="action_open_lines" string="Ver en lista / exportar" type="object" class="btn-secondary" invisible="not line_ids"/>
+                    <button name="action_link_matchable" string="Vincular las que se pueden" type="object" class="btn-secondary"
+                            invisible="not line_ids"
+                            confirm="Se vinculan por SKU/código de barras las variantes marcadas como 'Se puede vincular'. ¿Continuar?"/>
+                    <button string="Cerrar" class="btn-secondary" special="cancel"/>
+                </footer>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_tn_unmatched_variants_line_tree" model="ir.ui.view">
+        <field name="name">tn.unmatched.variants.line.tree</field>
+        <field name="model">tn.unmatched.variants.line</field>
+        <field name="arch" type="xml">
+            <tree create="0" edit="0" delete="0" decoration-success="reason == 'matchable'" decoration-muted="origin == 'odoo'">
+                <field name="origin"/>
+                <field name="reason"/>
+                <field name="tn_name"/>
+                <field name="tn_sku"/>
+                <field name="tn_barcode" optional="show"/>
+                <field name="tn_published" optional="hide"/>
+                <field name="tn_product_id" optional="show"/>
+                <field name="tn_variant_id"/>
+                <field name="odoo_product_id"/>
+                <field name="odoo_default_code" optional="hide"/>
+                <field name="odoo_product_id_tn" optional="show"/>
+                <field name="odoo_candidate_count" optional="hide"/>
+                <button name="action_link" string="Vincular" type="object" icon="fa-link" invisible="reason != 'matchable'"/>
+            </tree>
+        </field>
+    </record>
+
+    <record id="view_tn_unmatched_variants_line_search" model="ir.ui.view">
+        <field name="name">tn.unmatched.variants.line.search</field>
+        <field name="model">tn.unmatched.variants.line</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="tn_name"/>
+                <field name="tn_sku"/>
+                <field name="tn_barcode"/>
+                <field name="odoo_product_id"/>
+                <filter name="from_tn" string="Faltan en Odoo" domain="[('origin', '=', 'tn')]"/>
+                <filter name="from_odoo" string="Faltan en TN" domain="[('origin', '=', 'odoo')]"/>
+                <filter name="matchable" string="Se pueden vincular" domain="[('reason', '=', 'matchable')]"/>
+                <group expand="0" string="Agrupar por">
+                    <filter name="group_reason" string="Motivo" context="{'group_by': 'reason'}"/>
+                    <filter name="group_origin" string="Falta en" context="{'group_by': 'origin'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_tn_unmatched_variants_wizard" model="ir.actions.act_window">
+        <field name="name">Variantes sin match TN ↔ Odoo</field>
+        <field name="res_model">tn.unmatched.variants.wizard</field>
+        <field name="view_mode">form</field>
+        <field name="target">new</field>
+    </record>
+
+    <menuitem id="menu_tn_unmatched_variants_wizard" name="Variantes sin match TN ↔ Odoo"
+              parent="menu_settings_tn" action="action_tn_unmatched_variants_wizard"/>
+</odoo>

@@ -9,3 +9,5 @@ from . import get_tn_location_wizard
 from . import synchronize_products_wizard
 from . import mass_synchronize_products_wizard
 from . import create_orders_by_date_wizard
+from . import tn_unmatched_variants_wizard
+
