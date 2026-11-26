@@ -5,6 +5,7 @@ from odoo.exceptions import ValidationError
 import requests
 import base64
 import random
+import time
 
 _logger = logging.getLogger(__name__)
 
@@ -374,6 +375,7 @@ class TiendaNubeResCompanyInherit(models.Model):
                         'list_price': float(variant['price']) if variant['price'] else 0,
                         'standard_price': float(variant['cost']) if variant['cost'] else 0,
                         'precio_promocional_tn': float(variant['promotional_price']) if variant['promotional_price'] else 0,
+                        'tn_promotional_price_sent': float(variant['promotional_price']) if variant['promotional_price'] else 0,
                         'alto_tn': float(variant['height']),
                         'ancho_tn': float(variant['width']),
                         'profundidad_tn': float(variant['depth']),
@@ -457,16 +459,11 @@ class TiendaNubeResCompanyInherit(models.Model):
             for variant in product.product_variant_ids.filtered(lambda x: x.product_id_tn != False):
                 url = "https://api.tiendanube.com/v1/%s/products/%s/variants/%s" % (self.tiendanube_id, product.id_tn, variant.product_id_tn)
                 
-                price_tn = self.tn_pricelist_id._get_product_price(variant.product_tmpl_id, quantity=1)
-                if price_tn is None:
-                    price_tn = variant.list_price
-                if self.tn_type_tax == 'not_included':
-                    price_tn = variant.taxes_id.compute_all(price_tn)['total_included']
+                price_tn = self._tn_get_variant_price(variant)
                 # No se sincroniza el stock si esta pausado a nivel compañia o a nivel producto
                 stock_paused = self.tn_pausar_stock_tn or variant.tn_pausar_stock_producto
                 stock_variant = self._tn_compute_variant_stock(variant) if not stock_paused else None
                 data = {
-                    "promotional_price": variant.precio_promocional_tn if self.update_product_tn_promotional_price else None,
                     "weight": variant.peso_tn if self.update_product_tn_dimensions else None,
                     "width": variant.ancho_tn if self.update_product_tn_dimensions else None,
                     "height": variant.alto_tn if self.update_product_tn_dimensions else None,
@@ -485,10 +482,14 @@ class TiendaNubeResCompanyInherit(models.Model):
                 }
                 # Eliminar claves con valor None segun confirguracion de la empresa
                 data = {k: v for k, v in data.items() if v is not None}
-
+                # La promo se agrega despues del filtro: None debe viajar como null para quitarla en TN
+                if self.update_product_tn_promotional_price:
+                    data["promotional_price"] = self._tn_get_variant_promotional_price(variant)
                 response = requests.put(url, headers=headers, json=data)
                 if response.status_code != 200:
                     raise ValidationError('Error al actualizar stock de Tienda Nube: %s' % response.text)
+                if 'promotional_price' in data:
+                    variant._tn_mark_promo_sent()
             # Hacemos un commit y procedemos a actulizar stock por warehouse
             self.env.cr.commit()
             # Buscamos los wharehouse que tengan location_id_tn
@@ -500,6 +501,21 @@ class TiendaNubeResCompanyInherit(models.Model):
             # Actualizamos el stock en Tienda Nube
             self.update_product_stock_tn(product, location_id_tn)
             
+    def _tn_get_variant_price(self, variant):
+        """Precio de la variante para TN. Se consulta la lista con la variante (no con la plantilla)
+        para que apliquen las reglas por variante en plantillas con varias variantes."""
+        if self.tn_pricelist_id:
+            price_tn = self.tn_pricelist_id._get_product_price(variant, quantity=1)
+        else:
+            price_tn = variant.lst_price
+        if self.tn_type_tax == 'not_included':
+            price_tn = variant.taxes_id.compute_all(price_tn)['total_included']
+        return price_tn
+
+    def _tn_get_variant_promotional_price(self, variant):
+        """Precio promocional para TN: None (null en el JSON) cuando no hay promo, para que TN la quite."""
+        return variant.precio_promocional_tn or None
+
     # Dividir en lotes de hasta 40 variantes
     def _split_batches(self, products, max_variants):
         batches = []
@@ -544,19 +560,18 @@ class TiendaNubeResCompanyInherit(models.Model):
                 url = "https://api.tiendanube.com/v1/%s/products/%s/variants/%s" % (
                     self.tiendanube_id, product.id_tn, variant.product_id_tn)
 
-                price_tn = self.tn_pricelist_id._get_product_price(variant.product_tmpl_id, quantity=1)
-                if price_tn is None:
-                    price_tn = variant.list_price
-                if self.tn_type_tax == 'not_included':
-                    price_tn = variant.taxes_id.compute_all(price_tn)['total_included']
+                price_tn = self._tn_get_variant_price(variant)
                 data = {
-                    "promotional_price": variant.precio_promocional_tn,
                     "cost": variant.standard_price if variant.standard_price > 0 else None,
                     "price": price_tn,
                 }
+                if self.update_product_tn_promotional_price:
+                    data["promotional_price"] = self._tn_get_variant_promotional_price(variant)
                 response = requests.put(url, headers=headers, json=data)
                 if response.status_code != 200:
                     raise ValidationError('Error al actualizar precio de Tienda Nube: %s' % response.text)
+                if 'promotional_price' in data:
+                    variant._tn_mark_promo_sent()
 
     def _update_product_price_tn_batch(self, products):
         """Actualiza precios usando PATCH batch (para > 5 variantes)"""
@@ -568,11 +583,7 @@ class TiendaNubeResCompanyInherit(models.Model):
         for product in products:
             data_variants = []
             for variant in product.product_variant_ids.filtered(lambda x: x.product_id_tn != False):
-                price_tn = self.tn_pricelist_id._get_product_price(variant.product_tmpl_id, quantity=1)
-                if price_tn is None:
-                    price_tn = variant.list_price
-                if self.tn_type_tax == 'not_included':
-                    price_tn = variant.taxes_id.compute_all(price_tn)['total_included']
+                price_tn = self._tn_get_variant_price(variant)
 
                 data_variants.append({
                     'id': int(variant.product_id_tn),
@@ -592,6 +603,55 @@ class TiendaNubeResCompanyInherit(models.Model):
             response = requests.patch(url, headers=headers, json=batch)
             if response.status_code != 200:
                 raise ValidationError('Error al actualizar precios de Tienda Nube: %s' % response.text)
+
+        # PATCH /products/stock-price no acepta promotional_price: la promo se envia por producto
+        # con PATCH /products/{id}/variants, que solo actualiza las variantes enviadas (no crea ni borra).
+        if self.update_product_tn_promotional_price:
+            self._update_product_promotional_price_tn_batch(products)
+
+    def _update_product_promotional_price_tn_batch(self, products, chunk_size=50, max_retries=4):
+        """Envia la promo por producto con PATCH /products/{id}/variants (stock-price no la acepta).
+
+        Solo viajan las variantes cuya promo cambio desde el ultimo envio
+        (tn_promotional_price_sent). Asi:
+        - quien no usa la promo en Odoo no genera ningun request extra ni pisa las promos que
+          carga directamente en el admin de Tienda Nube;
+        - el cron diario de precios no hace un request por producto para todo el catalogo.
+        Un error en un producto queda en el log y no corta el resto."""
+        headers = self.get_headers_tn()
+        for product in products:
+            if not product.id_tn:
+                continue
+            variants = product.product_variant_ids.filtered(
+                lambda v: v.product_id_tn and v._tn_promo_pending())
+            if not variants:
+                continue
+            url = "https://api.tiendanube.com/v1/%s/products/%s/variants" % (self.tiendanube_id, product.id_tn)
+            for start in range(0, len(variants), chunk_size):
+                chunk = variants[start:start + chunk_size]
+                data_variants = [{
+                    'id': int(variant.product_id_tn),
+                    'promotional_price': self._tn_get_variant_promotional_price(variant),
+                } for variant in chunk]
+                for attempt in range(max_retries + 1):
+                    response = requests.patch(url, headers=headers, json=data_variants)
+                    if response.status_code != 429 or attempt == max_retries:
+                        break
+                    # Rate limit de TN: esperamos y reintentamos
+                    time.sleep(2 ** attempt)
+                if response.status_code == 200:
+                    chunk._tn_mark_promo_sent()
+                else:
+                    _logger.warning('[TN] Error al actualizar precio promocional de %s: %s',
+                                    product.display_name, response.text)
+                    self.env['tn.log'].create_log(
+                        'Error al actualizar precio promocional en Tienda Nube',
+                        'Producto %s' % product.display_name,
+                        'product.template',
+                        product.id,
+                        'error',
+                        response.text,
+                    )
 
     #Actualizamos stock de productos en TN con PATCH /products/stock-price
     def update_product_stock_tn(self, products, location_id_tn):
@@ -732,16 +792,12 @@ class TiendaNubeResCompanyInherit(models.Model):
             values = []
             for value in variant.product_template_attribute_value_ids:
                 values.append(value.name)
-            price_tn = self.tn_pricelist_id._get_product_price(variant.product_tmpl_id, quantity=1)
-            if price_tn is None:
-                price_tn = variant.list_price
-            if self.tn_type_tax == 'not_included':
-                price_tn = variant.taxes_id.compute_all(price_tn)['total_included']
+            price_tn = self._tn_get_variant_price(variant)
             stock_variant = self._tn_compute_variant_stock(variant)
             variants.append({
                 "values": values,
                 "price": price_tn,
-                "promotional_price": variant.precio_promocional_tn,
+                "promotional_price": self._tn_get_variant_promotional_price(variant),
                 "weight": variant.peso_tn,
                 "width": variant.ancho_tn,
                 "height": variant.alto_tn,
@@ -776,6 +832,7 @@ class TiendaNubeResCompanyInherit(models.Model):
             for v in data['variants']:
                 variant = product.product_variant_ids.filtered(lambda x: x.barcode.replace(' ', '') == v['barcode'])
                 variant.product_id_tn = v['id']
+                variant._tn_mark_promo_sent()
                 # Si se contemplan imagenes por variantes, asignamos la imagen correspondiente a la variante
                 if product.contemplar_imagen_variantes_tn and 'images' in data and len(data['images']) > 0:
                     #Modificamos la imagenes de la variante en tienda nube
