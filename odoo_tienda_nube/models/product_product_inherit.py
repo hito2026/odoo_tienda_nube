@@ -43,7 +43,70 @@ class TiendaNubeProductProductInherit(models.Model):
         res = super().write(vals)
         if 'precio_promocional_tn' in vals and not self.env.context.get(TN_SKIP_PROMO_SYNC):
             self._tn_sync_promo_to_pricelist()
+        if set(vals) & set(self._tn_inventory_dimension_trigger_fields()) and self._tn_dimensions_from_inventory_enabled():
+            self._tn_copy_inventory_dimensions()
         return res
+
+    @api.model_create_multi
+    def create(self, vals_list):
+        products = super().create(vals_list)
+        if self._tn_dimensions_from_inventory_enabled():
+            products._tn_copy_inventory_dimensions()
+        return products
+
+    # ------------------------------------------------------------------
+    # Medidas de Inventario -> campos Tienda Nube
+    # ------------------------------------------------------------------
+    @api.model
+    def _tn_inventory_dimension_trigger_fields(self):
+        """Campos de Inventario cuyo cambio dispara la copia a los campos TN.
+        Los modulos puente (p.ej. odoo_tienda_nube_product_dimension) agregan los suyos."""
+        return ['weight']
+
+    @api.model
+    def _tn_dimensions_from_inventory_enabled(self):
+        return bool(self.env['res.company'].sudo().search_count([('tn_dimensions_from_inventory', '=', True)], limit=1))
+
+    @api.model
+    def _tn_convert_uom(self, value, from_uom, to_xmlid):
+        to_uom = self.env.ref(to_xmlid, raise_if_not_found=False)
+        if not value or not from_uom or not to_uom or from_uom == to_uom:
+            return value
+        return from_uom._compute_quantity(value, to_uom, round=False)
+
+    def _tn_inventory_dimension_vals(self):
+        """Valores TN (peso en kg, medidas en cm) calculados desde los campos de Inventario.
+        Solo devuelve los valores mayores a 0 para no borrar lo cargado en Tienda Nube."""
+        self.ensure_one()
+        weight_uom = self.product_tmpl_id._get_weight_uom_id_from_ir_config_parameter()
+        weight = self._tn_convert_uom(self.weight, weight_uom, 'uom.product_uom_kgm')
+        return {'peso_tn': round(weight, 3)} if weight and weight > 0 else {}
+
+    def _tn_copy_inventory_dimensions(self):
+        """Copia peso/medidas de Inventario a los campos TN. Devuelve cuantas variantes cambiaron."""
+        updated = 0
+        for variant in self:
+            vals = {
+                fname: value for fname, value in variant._tn_inventory_dimension_vals().items()
+                if float_compare(value, variant[fname] or 0.0, precision_digits=3) != 0
+            }
+            if vals:
+                super(TiendaNubeProductProductInherit, variant.sudo()).write(vals)
+                updated += 1
+        return updated
+
+    def action_tn_copy_inventory_dimensions(self):
+        updated = self._tn_copy_inventory_dimensions()
+        return {
+            'type': 'ir.actions.client',
+            'tag': 'display_notification',
+            'params': {
+                'title': _("Medidas copiadas"),
+                'message': _("Se actualizaron las medidas de Tienda Nube de %s variantes.", updated),
+                'type': 'success',
+                'sticky': False,
+            },
+        }
 
     def _tn_promo_pending(self):
         """True si la promo actual difiere de la ultima enviada a Tienda Nube."""

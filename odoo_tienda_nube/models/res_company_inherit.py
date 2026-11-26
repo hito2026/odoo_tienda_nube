@@ -1,7 +1,9 @@
 import logging
 import datetime
+import math
 from odoo import _, api, fields, models
 from odoo.exceptions import ValidationError
+from odoo.tools import float_round
 import requests
 from datetime import timedelta
 import base64
@@ -34,6 +36,21 @@ class TiendaNubeResCompanyInherit(models.Model):
     tn_pausar_stock_tn = fields.Boolean(
         'Pausar sincronización de stock',
         help="Si esta activo no se sincroniza stock con Tienda Nube por ningún medio (ni tiempo real ni cron cada 5 minutos).",
+    )
+    tn_stock_threshold_percent = fields.Float(
+        'Umbral de stock TN (%)',
+        digits=(5, 2),
+        help="Porcentaje del stock que se reserva y NO se publica en Tienda Nube. Se aplica sobre la "
+             "cantidad que resulta de la Configuracion de Stock y las ubicaciones elegidas, y el "
+             "resultado se redondea hacia abajo a un entero. Ej.: 10 unidades con 15% -> se publican 8. "
+             "En 0 se publica todo el stock, como siempre.",
+    )
+    tn_dimensions_from_inventory = fields.Boolean(
+        'Tomar medidas de Inventario',
+        help="Si esta activo, el peso y las medidas cargadas en la pestaña Inventario del producto se "
+             "copian a los campos de Tienda Nube (peso en kg, medidas en cm) cada vez que se modifican. "
+             "Solo se copian los valores mayores a 0. Para la carga inicial usar el boton "
+             "'Copiar medidas de Inventario'.",
     )
     tn_config_confirmation_sale = fields.Boolean('Confirmar venta', help="Si esta activo se confirma la venta al crear la orden de venta, sino se deja en estado borrador")
     tn_config_stock_realtime = fields.Boolean('Stock en tiempo real', help="Si esta activo se actualiza el stock en tiempo real, sino se actualiza cada 30 minutos")
@@ -72,6 +89,39 @@ class TiendaNubeResCompanyInherit(models.Model):
     update_product_tn_cost = fields.Boolean('Actualizar Costo', default=True, help="Si esta activo se actualiza el costo del producto en Tienda Nube")
     update_product_tn_description = fields.Boolean('Actualizar Descripcion', default=True, help="Si esta activo se actualiza la descripcion del producto en Tienda Nube") 
     update_product_tn_published = fields.Boolean('Actualizar Publicacion', default=True, help="Si esta activo se actualiza la publicacion del producto en Tienda Nube")
+
+    @api.constrains('tn_stock_threshold_percent')
+    def _check_tn_stock_threshold_percent(self):
+        for company in self:
+            if not 0 <= company.tn_stock_threshold_percent < 100:
+                raise ValidationError(_("El umbral de stock de Tienda Nube debe estar entre 0 y 100 (sin incluir 100)."))
+
+    def _tn_apply_stock_threshold(self, qty):
+        """Descuenta el umbral porcentual y redondea hacia abajo a entero (nunca negativo)."""
+        self.ensure_one()
+        if qty <= 0:
+            return 0
+        if self.tn_stock_threshold_percent:
+            qty = qty * (100.0 - self.tn_stock_threshold_percent) / 100.0
+        # float_round evita que 6.9999999 por error de coma flotante termine en 6
+        return int(math.floor(float_round(qty, precision_digits=6)))
+
+    def action_tn_copy_inventory_dimensions(self):
+        self.ensure_one()
+        variants = self.env['product.product'].search([
+            '|', ('company_id', '=', False), ('company_id', '=', self.id),
+        ])
+        updated = variants._tn_copy_inventory_dimensions()
+        return {
+            'type': 'ir.actions.client',
+            'tag': 'display_notification',
+            'params': {
+                'title': _("Medidas copiadas"),
+                'message': _("Se actualizaron las medidas de Tienda Nube de %s variantes.", updated),
+                'type': 'success',
+                'sticky': False,
+            },
+        }
 
     @api.constrains('tn_force_tax_ids')
     def _check_tn_force_tax_ids(self):
@@ -431,9 +481,7 @@ class TiendaNubeResCompanyInherit(models.Model):
                 variant_ctx = variant.with_context(warehouse=target_warehouse.ids) if target_warehouse else variant
                 stock_variant = variant_ctx.qty_available if self.tn_config_stock == 'stock' else variant_ctx.virtual_available
 
-        if stock_variant < 0:
-            stock_variant = 0
-        return int(stock_variant)
+        return self._tn_apply_stock_threshold(stock_variant)
 
     # Metodo de actualizacion desde Odoo a TN
     def update_product_tn(self, products):

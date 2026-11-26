@@ -14,6 +14,7 @@
                             <button name="action_test_connection_tn" type="object" string="🔗 Probar Conexión" class="oe_highlight"/>
                             <field name="tn_config_confirmation_sale"/>
                             <field name="tn_config_stock"/>
+                            <field name="tn_stock_threshold_percent"/>
                             <field name="tn_stock_location_ids" widget="many2many_tags"/>
                             <field name="tn_config_stock_realtime" invisible="tn_pausar_stock_tn"/>
                             <field name="tn_pausar_stock_tn" invisible="tn_config_stock_realtime"/>
@@ -35,6 +36,12 @@
                             <field name="update_product_tn_categories" />
                             <field name="update_product_tn_promotional_price" />
                             <field name="update_product_tn_dimensions" />
+                            <field name="tn_dimensions_from_inventory" invisible="not update_product_tn_dimensions"/>
+                            <button name="action_tn_copy_inventory_dimensions" type="object"
+                                    string="Copiar medidas de Inventario"
+                                    invisible="not tn_dimensions_from_inventory"
+                                    confirm="Se copian el peso y las medidas de la pestaña Inventario a los campos de Tienda Nube de todas las variantes (solo valores mayores a 0). ¿Continuar?"
+                                    colspan="2"/>
                             <field name="update_product_tn_sku" />
                             <field name="update_product_tn_mpn" />
                         </group>

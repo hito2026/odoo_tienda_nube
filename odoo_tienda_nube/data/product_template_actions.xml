@@ -49,4 +49,25 @@
         record.update_tn()
         ]]></field>
     </record>
+
+    <!-- Copia peso/medidas de la pestaña Inventario a los campos de Tienda Nube -->
+    <record id="server_action_copy_inventory_dimensions_tn" model="ir.actions.server">
+        <field name="name">Copiar medidas de Inventario a Tienda Nube</field>
+        <field name="model_id" ref="product.model_product_template"/>
+        <field name="binding_model_id" ref="product.model_product_template"/>
+        <field name="binding_type">action</field>
+        <field name="binding_view_types">list,form</field>
+        <field name="state">code</field>
+        <field name="code">action = records.action_tn_copy_inventory_dimensions()</field>
+    </record>
+
+    <record id="server_action_copy_inventory_dimensions_tn_variant" model="ir.actions.server">
+        <field name="name">Copiar medidas de Inventario a Tienda Nube</field>
+        <field name="model_id" ref="product.model_product_product"/>
+        <field name="binding_model_id" ref="product.model_product_product"/>
+        <field name="binding_type">action</field>
+        <field name="binding_view_types">list,form</field>
+        <field name="state">code</field>
+        <field name="code">action = records.action_tn_copy_inventory_dimensions()</field>
+    </record>
 </odoo>
