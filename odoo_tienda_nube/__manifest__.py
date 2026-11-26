@@ -12,6 +12,7 @@
         "base",
         "stock",
         "sale_management",
+        "account",
     ],
     "data": [
         "data/product_discount_tn.xml",
