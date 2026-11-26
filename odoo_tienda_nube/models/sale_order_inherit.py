@@ -190,10 +190,7 @@ class SaleOrderTiendaNubeInherit(models.Model):
                         self.env.cr.rollback()
                         raise ValidationError(_("Producto '{0}' con codigo '{1}' en Tienda Nuve no encontrado en Odoo".format(line['name'], line['variant_id'])))
                     #Verificamos si tenemos que quitar impuestos
-                    price_unit = float(line['price'])
-                    if self.company_id.tn_type_tax == 'not_included':
-                        value_tax = (((product.taxes_id.compute_all(price_unit)['total_included']) * 100) / (product.taxes_id.compute_all(price_unit)['total_excluded'])) / 100
-                        price_unit = price_unit / value_tax
+                    price_unit = self.company_id._tn_price_from_tn_to_odoo(product, float(line['price']))
                     self.env['sale.order.line'].create({
                         'name': line['name'],
                         'order_id': self.id,
@@ -277,10 +274,7 @@ class SaleOrderTiendaNubeInherit(models.Model):
                     raise ValidationError(_("Producto de envio no encontrado en Odoo"))
                 
                 #Verificamos si tenemos que quitar impuestos
-                price_shipping = float(order['shipping_cost_customer'])
-                if self.company_id.tn_type_tax == 'not_included':
-                    value_tax = (((product_shipping_tn.taxes_id.compute_all(price_shipping)['total_included']) * 100) / (product_shipping_tn.taxes_id.compute_all(price_shipping)['total_excluded'])) / 100
-                    price_shipping = price_shipping / value_tax
+                price_shipping = self.company_id._tn_price_from_tn_to_odoo(product_shipping_tn, float(order['shipping_cost_customer']))
 
                 self.env['sale.order.line'].create({
                     'name': 'Costo de Envío (' + order['shipping_option'] + ')',
