@@ -3,6 +3,7 @@ import datetime
 from odoo import _, api, fields, models
 from odoo.exceptions import ValidationError
 import requests
+from datetime import timedelta
 import base64
 import random
 import time
@@ -959,6 +960,47 @@ class TiendaNubeResCompanyInherit(models.Model):
                 error_tn=response.text,
             )
             raise ValidationError('Error al obtener ordenes de Tienda Nube: %s' % response.text)
+
+    # Metodo para traer ordenes de Tienda Nube a Odoo filtradas por rango de fechas
+    def get_orders_by_date_tn(self, date_from, date_to):
+        headers = self.get_headers_tn()
+        date_from_str = str(date_from) + 'T00:00:00'
+        date_to_str = str(date_to) + 'T23:59:59'
+        page = 1
+        while True:
+            url = (
+                "https://api.tiendanube.com/v1/%s/orders?fields=id"
+                "&created_at_min=%s&created_at_max=%s&page=%s&per_page=200"
+            ) % (self.tiendanube_id, date_from_str, date_to_str, page)
+            response = requests.get(url, headers=headers)
+            if response.status_code == 200:
+                data = response.json()
+                if not data:
+                    break
+                for order in data:
+                    self.env['sale.order']._tn_import_order(order['id'], self)
+                if len(data) < 200:
+                    break
+                page += 1
+            elif response.status_code == 404:
+                break
+            else:
+                self.env['tn.log'].create_log(
+                    name='Error al obtener órdenes por fecha de Tienda Nube',
+                    message='Rango: %s - %s' % (date_from_str, date_to_str),
+                    model='res.company',
+                    model_id=self.id,
+                    level='error',
+                    error_tn=response.text,
+                )
+                raise ValidationError('Error al obtener órdenes de Tienda Nube: %s' % response.text)
+
+    # Metodo para el CRON: trae las ordenes de ayer y hoy. Se incluye el dia anterior para
+    # no perder las ordenes de las ultimas horas del dia cuando el cron corre pasada la
+    # medianoche (o por la diferencia horaria con UTC). Las existentes no se duplican.
+    def cron_sync_orders_today_tn(self):
+        today = fields.Date.context_today(self)
+        self.get_orders_by_date_tn(today - timedelta(days=1), today)
 
     def action_test_connection_tn(self):
         result = self.test_connection_tn()
