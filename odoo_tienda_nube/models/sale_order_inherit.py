@@ -1,12 +1,19 @@
+import ast
 import logging
+import re
 import requests
 import base64
 import traceback
 
 from datetime import datetime
+from markupsafe import Markup
 from psycopg2 import IntegrityError
 from odoo import _, api, fields, models
 from odoo.exceptions import ValidationError
+from odoo.tools import email_normalize
+
+# Valores que Tienda Nube manda en vez de omitir el dato ("None" llega como string).
+TN_EMPTY_VALUES = ('', 'none', 'null')
 
 _logger = logging.getLogger(__name__)
 
@@ -84,6 +91,338 @@ class SaleOrderTiendaNubeInherit(models.Model):
         except IntegrityError:
             order = self.sudo().search([('id_tn', '=', id_tn)], limit=1)
         return order
+
+    def _tn_effective_taxes(self, product):
+        """Impuestos con los que va a quedar la linea: los forzados en la compañia si hay,
+        si no los del producto. Se usa para desarmar el precio que manda Tienda Nube, que
+        siempre viene con impuestos incluidos."""
+        self.ensure_one()
+        forced = self.company_id.tn_force_tax_ids
+        if forced:
+            return forced
+        return product.taxes_id._filter_taxes_by_company(self.company_id)
+
+    def _tn_price_unit_without_taxes(self, price_unit, taxes, product=None):
+        """Lleva el precio que manda Tienda Nube (siempre precio final, con impuestos) al
+        price_unit de la linea, usando los impuestos que la linea va a llevar en Odoo (si se
+        fuerza un IVA distinto al del producto, desarmar con el del producto daria un neto
+        equivocado).
+
+        - 'No incluido': se quitan todos los impuestos.
+        - 'Incluido': el precio final se respeta; solo se quitan los impuestos que NO son
+          'incluido en el precio', porque Odoo los sumaria encima y duplicaria el IVA. Si los
+          impuestos son price_include el precio queda igual."""
+        self.ensure_one()
+        if not price_unit or not taxes:
+            return price_unit
+        if self.company_id.tn_type_tax == 'not_included':
+            totals = taxes.compute_all(price_unit, product=product)
+            if not totals['total_included']:
+                return price_unit
+            return price_unit * totals['total_excluded'] / totals['total_included']
+        taxes_to_strip = taxes.filtered(lambda t: not t.price_include)
+        if not taxes_to_strip:
+            return price_unit
+        return taxes_to_strip.with_context(force_price_include=True).compute_all(
+            price_unit, product=product)['total_excluded']
+
+    def _tn_apply_forced_taxes(self, order_line):
+        """Reemplaza en la linea los impuestos que aporto el producto por los configurados
+        en la compañia, conservando los que agrego la posicion fiscal (percepciones).
+
+        Se hace despues de crear la linea a proposito: si se pasaran los impuestos en el
+        create, el compute de tax_id no correria y se perderian esas percepciones."""
+        self.ensure_one()
+        forced = self.company_id.tn_force_tax_ids
+        if not forced or not order_line or order_line.display_type:
+            return
+        product_taxes = order_line.order_id.fiscal_position_id.map_tax(order_line.product_id.taxes_id)
+        extra_taxes = order_line.tax_id - product_taxes
+        order_line.tax_id = [fields.Command.set((forced | extra_taxes).ids)]
+
+    # --- Contacto de la orden -------------------------------------------------------
+
+    def _tn_normalize_identification(self, value):
+        """Documento sin separadores: '30.123.456' -> '30123456', '20-30123456-7' ->
+        '20301234567'. Se conservan las letras para no romper pasaportes. Devuelve '' si
+        Tienda Nube no mando el dato (null, vacio o "None" como string)."""
+        value = str(value).strip() if value else ''
+        if value.lower() in TN_EMPTY_VALUES:
+            return ''
+        return re.sub(r'[\s.\-/]', '', value)
+
+    def _tn_get_identification(self, order):
+        """Documento del comprador, normalizado. Es la unica fuente tanto para buscar como
+        para crear el contacto: antes la busqueda miraba solo contact_identification y la
+        creacion tambien customer.identification, y el DNI se perdia cuando venia solo en
+        este ultimo."""
+        customer = order.get('customer') or {}
+        for value in (customer.get('identification'), order.get('contact_identification')):
+            identification = self._tn_normalize_identification(value)
+            if identification:
+                return identification
+        return ''
+
+    def _tn_get_email(self, order):
+        customer = order.get('customer') or {}
+        for value in (customer.get('email'), order.get('contact_email')):
+            email = str(value).strip() if value else ''
+            if email.lower() not in TN_EMPTY_VALUES:
+                return email
+        return ''
+
+    def _tn_identification_variants(self, identification):
+        """Formas en que el documento puede estar guardado en Odoo. La localizacion
+        agrega los formatos con puntos y guiones de su pais."""
+        return {identification}
+
+    def _tn_get_identification_type(self, order, identification):
+        """Tipo de documento (l10n_latam) a partir del payload. Devuelve False si
+        l10n_latam no esta instalado."""
+        if 'l10n_latam.identification.type' not in self.env:
+            return False
+        IdType = self.env['l10n_latam.identification.type']
+        billing_document_type = order.get('billing_document_type') or (order.get('customer') or {}).get('document_type')
+        if billing_document_type and str(billing_document_type).lower() not in TN_EMPTY_VALUES:
+            return IdType.search([('name', 'ilike', billing_document_type)], limit=1)
+        if order.get('billing_country') == 'AR':
+            digits = ''.join(filter(str.isdigit, identification))
+            if len(digits) in (7, 8):
+                return IdType.search([('name', 'ilike', 'DNI')], limit=1)
+            if len(digits) in (10, 11):
+                return IdType.search([('name', 'ilike', 'CUIT')], limit=1)
+        return IdType
+
+    def _tn_prepare_partner_vals(self, order):
+        """Arma los valores del contacto a crear a partir del payload de la orden TN."""
+        # Direccion
+        street_parts = [order.get('billing_address') or '']
+        if order.get('billing_number'):
+            street_parts.append(order['billing_number'])
+        street = ' '.join(filter(None, street_parts)) or False
+        country = self.env['res.country'].search([('code', '=', order.get('billing_country'))], limit=1)
+        state = False
+        if order.get('billing_province') and country:
+            state = self.env['res.country.state'].search([
+                ('name', 'ilike', order['billing_province']),
+                ('country_id', '=', country.id),
+            ], limit=1)
+        identification = self._tn_get_identification(order)
+        # Tienda Nube puede mandar "customer": null (compras como invitado); en ese
+        # caso usamos los datos de contacto de la orden en vez de romper.
+        customer = order.get('customer') or {}
+        partner_vals = {
+            'name': customer.get('name') or order['contact_name'],
+            'email': self._tn_get_email(order) or False,
+            'phone': customer.get('phone') or order['contact_phone'],
+            'vat': identification or False,
+            'company_type': 'person',
+            'street': street,
+            'street2': order.get('billing_floor') or False,
+            'zip': order.get('billing_zipcode') or False,
+            'city': order.get('billing_city') or False,
+            'state_id': state.id if state else False,
+            'country_id': country.id if country else False,
+        }
+        if identification:
+            id_type = self._tn_get_identification_type(order, identification)
+            if id_type:
+                partner_vals['l10n_latam_identification_type_id'] = id_type.id
+        return partner_vals
+
+    def _tn_search_partner_by_identification(self, identification):
+        partners = self.env['res.partner'].search([
+            ('vat', 'in', list(self._tn_identification_variants(identification))),
+        ])
+        # vat es un campo comercial: una empresa y sus contactos hijos lo comparten.
+        # Nos quedamos con el contacto comercial para no venderle a una direccion.
+        return partners.commercial_partner_id[:1]
+
+    def _tn_search_partners_by_email(self, email):
+        Partner = self.env['res.partner']
+        normalized = email_normalize(email) if email else False
+        if not normalized:
+            return Partner
+        if 'email_normalized' in Partner._fields:
+            partners = Partner.search([('email_normalized', '=', normalized)])
+        else:
+            # =ilike sin escapar trataria '_' y '%' del email como comodines
+            escaped = normalized.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+            partners = Partner.search([('email', '=ilike', escaped)])
+        return partners.commercial_partner_id
+
+    def _tn_find_or_create_partner(self, order):
+        """Busca el contacto de la orden TN; si no existe lo crea.
+
+        1. Por documento, en cualquiera de los formatos en que pueda estar guardado.
+        2. Si no, por email (sin distinguir mayusculas). Si el contacto encontrado no
+           tiene documento se le completa el que mando TN. Si tiene OTRO documento, es
+           otra persona que comparte el email (familia, pareja) y se crea uno nuevo.
+        3. Si no, se crea.
+
+        Punto de extension: los modulos de localizacion enganchan en
+        _tn_post_create_partner para completar datos fiscales del contacto creado."""
+        identification = self._tn_get_identification(order)
+        if identification:
+            partner = self._tn_search_partner_by_identification(identification)
+            if partner:
+                self._tn_post_find_partner(partner, order)
+                return partner
+
+        email_partners = self._tn_search_partners_by_email(self._tn_get_email(order))
+        if email_partners:
+            if not identification:
+                partner = email_partners[:1]
+                self._tn_post_find_partner(partner, order)
+                return partner
+            same_person = email_partners.filtered(
+                lambda p: self._tn_normalize_identification(p.vat) == identification)[:1]
+            if same_person:
+                self._tn_post_find_partner(same_person, order)
+                return same_person
+            without_identification = email_partners.filtered(lambda p: not p.vat)[:1]
+            if without_identification:
+                self._tn_fill_partner_identification(without_identification, order, identification)
+                self._tn_post_find_partner(without_identification, order)
+                return without_identification
+            # Todos los contactos con ese email tienen otro documento: no se pisa nada.
+
+        partner = self._tn_create_partner(order)
+        self._tn_post_create_partner(partner, order)
+        return partner
+
+    def _tn_fill_partner_identification(self, partner, order, identification):
+        """Completa el documento de un contacto existente que no lo tenia (compra anterior
+        como invitado, otro canal de venta, alta manual). Si la localizacion lo rechaza, el
+        contacto queda como estaba y se avisa en la venta."""
+        vals = {'vat': identification}
+        id_type = self._tn_get_identification_type(order, identification)
+        if id_type:
+            vals['l10n_latam_identification_type_id'] = id_type.id
+        try:
+            with self.env.cr.savepoint():
+                partner.write(vals)
+        except ValidationError as err:
+            self._tn_notify_partner_issue(partner, _(
+                "El contacto %(partner)s ya existía sin documento y no se le pudo cargar el que "
+                "envió Tienda Nube (%(identification)s) porque no pasó la validación. "
+                "Verificá el documento del contacto antes de facturar.",
+                partner=partner.display_name,
+                identification=identification,
+            ), err)
+
+    def _tn_create_partner(self, order):
+        """Crea el contacto de la orden. Si la localizacion rechaza el documento (largo o
+        digito verificador invalido, tipo que no corresponde al numero), se crea igual sin
+        documento y se avisa en la venta: un dato mal cargado en TN no puede frenar la orden.
+
+        El create va dentro de un savepoint porque la validacion corre despues del INSERT."""
+        Partner = self.env['res.partner']
+        vals = self._tn_prepare_partner_vals(order)
+        try:
+            with self.env.cr.savepoint():
+                return Partner.create(vals)
+        except ValidationError as err:
+            if not vals.get('vat'):
+                raise
+            identification = vals.pop('vat')
+            vals.pop('l10n_latam_identification_type_id', None)
+            partner = Partner.create(vals)
+            self._tn_notify_partner_issue(partner, _(
+                "El documento que envió Tienda Nube para %(partner)s (%(identification)s) no pasó "
+                "la validación, así que el contacto se creó sin documento. Cargalo a mano antes "
+                "de facturar.",
+                partner=partner.display_name,
+                identification=identification,
+            ), err)
+            return partner
+
+    def _tn_post_create_partner(self, partner, order):
+        """Hook post creacion del contacto. Vacio en el conector generico."""
+        return
+
+    def _tn_post_find_partner(self, partner, order):
+        """Hook sobre un contacto que YA existia y se reusa para esta orden.
+
+        Los datos fiscales que la localizacion completa al crear un contacto (en Argentina,
+        la responsabilidad frente a ARCA) no se completaban nunca en los contactos reusados,
+        porque el unico enganche era el alta. Aca se completa lo que falte.
+
+        Vacio en el conector generico. Solo debe rellenar campos vacios, nunca pisar datos
+        ya cargados a mano."""
+        return
+
+    def _tn_get_order_payload(self):
+        """Payload de Tienda Nube guardado en la orden. Ojo: json_tn no es JSON, es el repr
+        del dict de Python, asi que se lee con literal_eval y no con json.loads."""
+        self.ensure_one()
+        if not self.json_tn:
+            return {}
+        try:
+            payload = ast.literal_eval(self.json_tn)
+        except (ValueError, SyntaxError):
+            _logger.warning('[TN] Orden %s: no se pudo leer json_tn.', self.id_tn)
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    def action_tn_update_partner_data(self):
+        """Boton de la solapa Tienda Nube: completa los datos fiscales del contacto de la
+        orden sin tocar lineas ni precios.
+
+        El boton de sincronizacion completa solo esta disponible en borrador porque borra y
+        rearma las lineas, cosa que en una orden confirmada, con entregas y factura, es
+        destructiva. Este en cambio es seguro en cualquier estado."""
+        public_partner = self.env.ref('base.public_partner', raise_if_not_found=False)
+        for order in self:
+            if not order.partner_id or order.partner_id == public_partner:
+                continue
+            order._tn_post_find_partner(order.partner_id, order._tn_get_order_payload())
+        return True
+
+    def _tn_notify_partner_issue(self, partner, message, error=None):
+        """Nota en la venta + log TN sobre un dato del contacto que hay que revisar a mano."""
+        self.ensure_one()
+        _logger.warning('[TN] Orden %s, contacto %s: %s (%s)', self.id_tn, partner.id, message, error)
+        body = Markup('%s<br/><br/>%s') % (message, str(error)) if error else message
+        self.message_post(body=body)
+        self.env['tn.log'].create_log(
+            _('Revisar contacto — %s') % (self.name or ''),
+            message,
+            'sale.order',
+            self.id,
+            'warning',
+            str(error) if error else False,
+        )
+
+    @api.model
+    def _tn_import_order(self, id_tn, company):
+        """Importa una orden de TN en su propia transaccion, para los procesos masivos.
+
+        Cada orden termina en commit: la facturacion electronica ya hace commit por su
+        cuenta al obtener el CAE, y asi un error en una orden (que puede dejar la
+        transaccion abortada) se deshace solo a ella, queda en el log y no corta la
+        importacion de las siguientes."""
+        order_id = False
+        try:
+            order = self.with_company(company)._tn_find_or_create(id_tn)
+            order_id = order.id
+            if order.state == 'draft':
+                order.with_company(company).create_order_from_tn()
+            self.env.cr.commit()  # pylint: disable=invalid-commit
+            return True
+        except Exception as err:
+            self.env.cr.rollback()
+            _logger.exception("Error al importar la orden TN %s", id_tn)
+            self.env['tn.log'].sudo().create_log(
+                'Error al importar orden de Tienda Nube',
+                'Orden TN id %s: %s' % (id_tn, err),
+                'sale.order',
+                order_id,
+                'error',
+                traceback.format_exc(),
+            )
+            self.env.cr.commit()  # pylint: disable=invalid-commit
+            return False
 
     # Metodo para crear la orden en Odoo desde TN GET /orders/{id}
     def create_order_from_tn(self):
@@ -164,40 +503,40 @@ class SaleOrderTiendaNubeInherit(models.Model):
                 self.shipping_pickup_type_tn = order['shipping_pickup_type']
 
                 # Buscamos el cliente
-                partner = self.env['res.partner']
-                if order['contact_identification'] != None:
-                    partner = self.env['res.partner'].search([('vat', '=', order['contact_identification'])], limit=1)
-                elif order['contact_email'] != None:
-                    partner = self.env['res.partner'].search([('email', '=', order['contact_email'])], limit=1)
-                if not partner:
-                    # Tienda Nube puede mandar "customer": null (compras como invitado); en ese
-                    # caso usamos los datos de contacto de la orden en vez de romper.
-                    customer = order.get('customer') or {}
-                    partner = self.env['res.partner'].create({
-                        'name': customer.get('name') or order['contact_name'],
-                        'email': customer.get('email') or order['contact_email'],
-                        'phone': customer.get('phone') or order['contact_phone'],
-                        'vat': customer.get('identification') or order['contact_identification'],
-                        'company_type': 'person',
-                    })
+                partner = self._tn_find_or_create_partner(order)
                 self.partner_id = partner.id
                 
                 # Completamos lineas de la orden
+                missing_lines = []
                 for line in order['products']:
                     product = self.env['product.product'].search([('product_id_tn', '=', line['variant_id'])], limit=1)
-                    
+
                     if not product:
-                        self.env.cr.rollback()
-                        raise ValidationError(_("Producto '{0}' con codigo '{1}' en Tienda Nuve no encontrado en Odoo".format(line['name'], line['variant_id'])))
+                        missing_lines.append("'%s' (TN id: %s)" % (line['name'], line['variant_id']))
+                        continue
                     #Verificamos si tenemos que quitar impuestos
-                    price_unit = self.company_id._tn_price_from_tn_to_odoo(product, float(line['price']))
-                    self.env['sale.order.line'].create({
+                    price_unit = self._tn_price_unit_without_taxes(
+                        float(line['price']), self._tn_effective_taxes(product), product)
+                    order_line = self.env['sale.order.line'].create({
                         'name': line['name'],
                         'order_id': self.id,
                         'product_id': product.id,
                         'product_uom_qty': float(line['quantity']),
                         'price_unit': price_unit,
                     })
+                    self._tn_apply_forced_taxes(order_line)
+                if missing_lines:
+                    _logger.warning(
+                        '[TN] Orden %s: productos no encontrados en Odoo: %s',
+                        self.id_tn, ', '.join(missing_lines),
+                    )
+                    self.env['tn.log'].create_log(
+                        'Productos no encontrados — %s' % self.name,
+                        'Líneas omitidas por no estar sincronizadas con Odoo: %s' % ', '.join(missing_lines),
+                        'sale.order',
+                        self.id,
+                        'error',
+                    )
 
                 # DESCUENTOS
                 # Tienda Nube manda "coupon"/"promotional_discount" en null cuando no aplica,
@@ -235,38 +574,47 @@ class SaleOrderTiendaNubeInherit(models.Model):
                                 'end_date': coupon['end_date'],
                             })
                         self.coupon_tn_ids = [(4, coupon_tn.id)]
-                        self.env['sale.order.line'].create({
+                        discount_coupon_amount = self._tn_price_unit_without_taxes(
+                            float(order['discount_coupon']), self._tn_effective_taxes(product_discount_tn), product_discount_tn)
+                        order_line = self.env['sale.order.line'].create({
                             'name': 'Descuento por cupón (' + coupon['code'] + ')',
                             'order_id': self.id,
                             'product_id': product_discount_tn.id,
                             'product_uom_qty': -1,
-                            'price_unit': order['discount_coupon'],
-                        }).write({'tax_id': False})
+                            'price_unit': discount_coupon_amount,
+                        })
+                        self._tn_apply_forced_taxes(order_line)
                     # Verificamos por promociones aplicadas
                     for promotions_applied in promotions_applied_list:
                         if self.promotions_applied_tn:
                             self.promotions_applied_tn += "Tipo: " + promotions_applied['discount_script_type'] + " - Descuento: " + promotions_applied['total_discount_amount_short'] + "\n"
                         else:
                             self.promotions_applied_tn = "Tipo: " + promotions_applied['discount_script_type'] + " - Descuento: " + promotions_applied['total_discount_amount_short'] + "\n"
-                        self.env['sale.order.line'].create({
+                        discount_promo_amount = self._tn_price_unit_without_taxes(
+                            float(promotions_applied['total_discount_amount']), self._tn_effective_taxes(product_discount_tn), product_discount_tn)
+                        order_line = self.env['sale.order.line'].create({
                             'name': 'Promoción ' + promotions_applied['discount_script_type'],
                             'order_id': self.id,
                             'product_id': product_discount_tn.id,
                             'product_uom_qty': -1,
-                            'price_unit': promotions_applied['total_discount_amount'],
-                        }).write({'tax_id': False})
+                            'price_unit': discount_promo_amount,
+                        })
+                        self._tn_apply_forced_taxes(order_line)
 
                     # Verificamos por descuento de medio de pago (gateway)
                     if has_gateway_discount:
                         gateway_name = order.get('gateway_name') or order.get('gateway') or 'Medio de pago'
                         self.discount_gateway_tn = gateway_name + ': $' + order['discount_gateway']
-                        self.env['sale.order.line'].create({
+                        discount_gateway_amount = self._tn_price_unit_without_taxes(
+                            float(order['discount_gateway']), self._tn_effective_taxes(product_discount_tn), product_discount_tn)
+                        order_line = self.env['sale.order.line'].create({
                             'name': 'Descuento por medio de pago (' + gateway_name + ')',
                             'order_id': self.id,
                             'product_id': product_discount_tn.id,
                             'product_uom_qty': -1,
-                            'price_unit': float(order['discount_gateway']),
-                        }).write({'tax_id': False})
+                            'price_unit': discount_gateway_amount,
+                        })
+                        self._tn_apply_forced_taxes(order_line)
 
                 # ENVIO
                 product_shipping_tn = self.env.ref('odoo_tienda_nube.product_shipping_tn')
@@ -274,15 +622,17 @@ class SaleOrderTiendaNubeInherit(models.Model):
                     raise ValidationError(_("Producto de envio no encontrado en Odoo"))
                 
                 #Verificamos si tenemos que quitar impuestos
-                price_shipping = self.company_id._tn_price_from_tn_to_odoo(product_shipping_tn, float(order['shipping_cost_customer']))
+                price_shipping = self._tn_price_unit_without_taxes(
+                    float(order['shipping_cost_customer']), self._tn_effective_taxes(product_shipping_tn), product_shipping_tn)
 
-                self.env['sale.order.line'].create({
+                order_line = self.env['sale.order.line'].create({
                     'name': 'Costo de Envío (' + order['shipping_option'] + ')',
                     'order_id': self.id,
                     'product_id': product_shipping_tn.id,
                     'product_uom_qty': 1,
                     'price_unit': price_shipping,
                 })
+                self._tn_apply_forced_taxes(order_line)
 
                 #Verificamos si hay Almacen de salida
                 # assigned_location puede venir en null (fulfillment aun sin ubicacion asignada)

@@ -5,13 +5,7 @@
             <field name="name">mass.synchronize.products.wizard.form</field>
             <field name="model">mass.synchronize.products.wizard</field>
             <field name="arch" type="xml">
-                <form string="Asignar ID de Productos">
-                        <script>
-                            $(document).ready(function(){
-                                $('.modal-dialog').css({'max-width': '85%'});
-                                $('.modal-content').css({'max-width': '100%'});
-                            });
-                        </script>
+                <form string="Asignar ID de Productos" class="mass-sync-wizard">
                         <h3>Sincroniza los productos correspondientes</h3>
                         <field name="synchronize_products_ids" nolabel="1">
                             <tree create="0" delete="0" editable="false">

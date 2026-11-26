@@ -241,6 +241,9 @@ class TiendaNubeProductTemplateInherit(models.Model):
             if len(archived_variants) == 1:
                 archived_variants.peso_tn = self.peso_tn
 
+    def action_tn_copy_inventory_dimensions(self):
+        return self.with_context(active_test=False).product_variant_ids.action_tn_copy_inventory_dimensions()
+
     # Sobreescribimos unlink para que no se pueda borrar producto de descuento de Tienda Nube
     def unlink(self):
         product_discount_tn = self.env.ref('odoo_tienda_nube.product_discount_tn_product_template')
@@ -363,7 +366,7 @@ class TiendaNubeProductTemplateInherit(models.Model):
                 index = 0 # Flag para recorrer los valores de las variantes ya que vinen ordenados segun el orden de los atributos
                 for attribute in product['attributes']:
                     #Buscamos si existe el atributo
-                    attribute_odoo = self.env['product.attribute'].search([('name', '=', attribute['es'])])
+                    attribute_odoo = self.env['product.attribute'].search([('name', '=', attribute['es'])], limit=1)
                     if not attribute_odoo:
                         #Creamos atributo
                         attribute_odoo = self.env['product.attribute'].create({
@@ -373,7 +376,7 @@ class TiendaNubeProductTemplateInherit(models.Model):
                     ids_vales = []
                     for variant in product['variants']:
 
-                        value_attribute_odoo = self.env['product.attribute.value'].search([('name', '=', variant['values'][index]['es']),('attribute_id', '=', attribute_odoo.id)])
+                        value_attribute_odoo = self.env['product.attribute.value'].search([('name', '=', variant['values'][index]['es']),('attribute_id', '=', attribute_odoo.id)], limit=1)
                         if not value_attribute_odoo:
                             #Creamos valor
                             value_attribute_odoo = self.env['product.attribute.value'].create({
@@ -450,6 +453,7 @@ class TiendaNubeProductTemplateInherit(models.Model):
                         'list_price': float(variant['price']) if variant['price'] else 0,
                         #'standard_price': float(variant['cost']) if variant['cost'] else 0, TODO al estar relacionado con Almacen el costo da error de permisos al actualizar
                         'precio_promocional_tn': float(variant['promotional_price']) if variant['promotional_price'] else 0,
+                        'tn_promotional_price_sent': float(variant['promotional_price']) if variant['promotional_price'] else 0,
                         'alto_tn': float(variant['height']),
                         'ancho_tn': float(variant['width']),
                         'profundidad_tn': float(variant['depth']),

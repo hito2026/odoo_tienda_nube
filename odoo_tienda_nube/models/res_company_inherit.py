@@ -1,8 +1,11 @@
 import logging
 import datetime
+import math
 from odoo import _, api, fields, models
 from odoo.exceptions import ValidationError
+from odoo.tools import float_round
 import requests
+from datetime import timedelta
 import base64
 import random
 import time
@@ -34,6 +37,21 @@ class TiendaNubeResCompanyInherit(models.Model):
         'Pausar sincronización de stock',
         help="Si esta activo no se sincroniza stock con Tienda Nube por ningún medio (ni tiempo real ni cron cada 5 minutos).",
     )
+    tn_stock_threshold_percent = fields.Float(
+        'Umbral de stock TN (%)',
+        digits=(5, 2),
+        help="Porcentaje del stock que se reserva y NO se publica en Tienda Nube. Se aplica sobre la "
+             "cantidad que resulta de la Configuracion de Stock y las ubicaciones elegidas, y el "
+             "resultado se redondea hacia abajo a un entero. Ej.: 10 unidades con 15% -> se publican 8. "
+             "En 0 se publica todo el stock, como siempre.",
+    )
+    tn_dimensions_from_inventory = fields.Boolean(
+        'Tomar medidas de Inventario',
+        help="Si esta activo, el peso y las medidas cargadas en la pestaña Inventario del producto se "
+             "copian a los campos de Tienda Nube (peso en kg, medidas en cm) cada vez que se modifican. "
+             "Solo se copian los valores mayores a 0. Para la carga inicial usar el boton "
+             "'Copiar medidas de Inventario'.",
+    )
     tn_config_confirmation_sale = fields.Boolean('Confirmar venta', help="Si esta activo se confirma la venta al crear la orden de venta, sino se deja en estado borrador")
     tn_config_stock_realtime = fields.Boolean('Stock en tiempo real', help="Si esta activo se actualiza el stock en tiempo real, sino se actualiza cada 30 minutos")
     tn_pricelist_id = fields.Many2one('product.pricelist', string='Lista de Precios Tienda Nube', help="Lista de precios que se usara para los productos de Tienda Nube")
@@ -43,6 +61,21 @@ class TiendaNubeResCompanyInherit(models.Model):
         ('not_included', 'No incluido'),
     ], string='Tipo de Impuesto Tienda Nube', default='included', help="Si es 'Incluido' el precio incluye el impuesto, si es 'No incluido' el precio no incluye el impuesto")
     
+    tn_force_tax_ids = fields.Many2many(
+        'account.tax',
+        'res_company_tn_force_tax_rel',
+        'company_id',
+        'tax_id',
+        string='Impuestos a forzar en lineas TN',
+        domain=[('type_tax_use', '=', 'sale')],
+        help="Impuestos que se aplican a TODAS las lineas de las ordenes creadas desde Tienda "
+             "Nube (productos, descuentos y envio), en reemplazo de los impuestos configurados "
+             "en el producto. Sirve para vender por Tienda Nube con un impuesto distinto al que "
+             "el producto usa en otros canales, sin tener que tocar la ficha del producto. "
+             "Los impuestos que agrega la posicion fiscal (percepciones) se conservan. "
+             "Si se deja vacio, cada linea usa los impuestos de su producto, como siempre."
+    )
+
     # Conf sincronizacion de productos
     update_product_tn_name = fields.Boolean('Actualizar nombre', default=True, help="Si esta activo se actualiza el nombre del producto en Tienda Nube")
     update_product_tn_categories = fields.Boolean('Actualizar categorias', default=True, help="Si esta activo se actualizan las categorias del producto en Tienda Nube")
@@ -56,6 +89,65 @@ class TiendaNubeResCompanyInherit(models.Model):
     update_product_tn_cost = fields.Boolean('Actualizar Costo', default=True, help="Si esta activo se actualiza el costo del producto en Tienda Nube")
     update_product_tn_description = fields.Boolean('Actualizar Descripcion', default=True, help="Si esta activo se actualiza la descripcion del producto en Tienda Nube") 
     update_product_tn_published = fields.Boolean('Actualizar Publicacion', default=True, help="Si esta activo se actualiza la publicacion del producto en Tienda Nube")
+
+    @api.constrains('tn_stock_threshold_percent')
+    def _check_tn_stock_threshold_percent(self):
+        for company in self:
+            if not 0 <= company.tn_stock_threshold_percent < 100:
+                raise ValidationError(_("El umbral de stock de Tienda Nube debe estar entre 0 y 100 (sin incluir 100)."))
+
+    def _tn_apply_stock_threshold(self, qty):
+        """Descuenta el umbral porcentual y redondea hacia abajo a entero (nunca negativo)."""
+        self.ensure_one()
+        if qty <= 0:
+            return 0
+        if self.tn_stock_threshold_percent:
+            qty = qty * (100.0 - self.tn_stock_threshold_percent) / 100.0
+        # float_round evita que 6.9999999 por error de coma flotante termine en 6
+        return int(math.floor(float_round(qty, precision_digits=6)))
+
+    def action_tn_copy_inventory_dimensions(self):
+        self.ensure_one()
+        variants = self.env['product.product'].search([
+            '|', ('company_id', '=', False), ('company_id', '=', self.id),
+        ])
+        updated = variants._tn_copy_inventory_dimensions()
+        return {
+            'type': 'ir.actions.client',
+            'tag': 'display_notification',
+            'params': {
+                'title': _("Medidas copiadas"),
+                'message': _("Se actualizaron las medidas de Tienda Nube de %s variantes.", updated),
+                'type': 'success',
+                'sticky': False,
+            },
+        }
+
+    @api.constrains('tn_force_tax_ids')
+    def _check_tn_force_tax_ids(self):
+        # Los impuestos forzados terminan en las lineas de venta de esta compañia, asi que
+        # tienen que pertenecerle (o a una compañia padre, en instalaciones con sucursales).
+        for company in self:
+            allowed = company
+            if 'parent_ids' in company._fields:
+                allowed = company.parent_ids
+            wrong = company.tn_force_tax_ids.filtered(lambda t: t.company_id and t.company_id not in allowed)
+            if wrong:
+                raise ValidationError(_(
+                    "Los impuestos %s no pertenecen a la compañía %s, por lo que no se pueden "
+                    "usar en las ordenes de Tienda Nube de esa compañía."
+                ) % (', '.join(wrong.mapped('name')), company.name))
+            # En Argentina la localizacion exige exactamente un impuesto del grupo IVA por
+            # linea de venta: si se configuran dos, la sincronizacion de la orden falla al
+            # crear las lineas. Lo avisamos aca en vez de dejar que reviente en cada orden.
+            if 'l10n_ar_vat_afip_code' in self.env['account.tax.group']._fields:
+                vat_taxes = company.tn_force_tax_ids.filtered(lambda t: t.tax_group_id.l10n_ar_vat_afip_code)
+                if len(vat_taxes) > 1:
+                    raise ValidationError(_(
+                        "Se configuro mas de un impuesto de IVA (%s) para las lineas de Tienda "
+                        "Nube. Debe haber uno solo; los demas impuestos pueden ser percepciones "
+                        "u otros grupos."
+                    ) % ', '.join(vat_taxes.mapped('name')))
 
     @api.constrains('tiendanube_access_token', 'tiendanube_id', 'tn_pricelist_id')
     def _check_tn_pricelist_id_required(self):
@@ -252,7 +344,7 @@ class TiendaNubeResCompanyInherit(models.Model):
                 index = 0 # Flag para recorrer los valores de las variantes ya que vinen ordenados segun el orden de los atributos
                 for attribute in product['attributes']:
                     #Buscamos si existe el atributo
-                    attribute_odoo = self.env['product.attribute'].search([('name', '=', attribute['es'])])
+                    attribute_odoo = self.env['product.attribute'].search([('name', '=', attribute['es'])], limit=1)
                     if not attribute_odoo:
                         #Creamos atributo
                         attribute_odoo = self.env['product.attribute'].create({
@@ -262,7 +354,7 @@ class TiendaNubeResCompanyInherit(models.Model):
                     ids_vales = []
                     for variant in product['variants']:
 
-                        value_attribute_odoo = self.env['product.attribute.value'].search([('name', '=', variant['values'][index]['es']),('attribute_id', '=', attribute_odoo.id)])
+                        value_attribute_odoo = self.env['product.attribute.value'].search([('name', '=', variant['values'][index]['es']),('attribute_id', '=', attribute_odoo.id)], limit=1)
                         if not value_attribute_odoo:
                             #Creamos valor
                             value_attribute_odoo = self.env['product.attribute.value'].create({
@@ -337,6 +429,7 @@ class TiendaNubeResCompanyInherit(models.Model):
                         'list_price': float(variant['price']) if variant['price'] else 0,
                         'standard_price': float(variant['cost']) if variant['cost'] else 0,
                         'precio_promocional_tn': float(variant['promotional_price']) if variant['promotional_price'] else 0,
+                        'tn_promotional_price_sent': float(variant['promotional_price']) if variant['promotional_price'] else 0,
                         'alto_tn': float(variant['height']),
                         'ancho_tn': float(variant['width']),
                         'profundidad_tn': float(variant['depth']),
@@ -388,9 +481,7 @@ class TiendaNubeResCompanyInherit(models.Model):
                 variant_ctx = variant.with_context(warehouse=target_warehouse.ids) if target_warehouse else variant
                 stock_variant = variant_ctx.qty_available if self.tn_config_stock == 'stock' else variant_ctx.virtual_available
 
-        if stock_variant < 0:
-            stock_variant = 0
-        return int(stock_variant)
+        return self._tn_apply_stock_threshold(stock_variant)
 
     # Metodo de actualizacion desde Odoo a TN
     def update_product_tn(self, products):
@@ -449,6 +540,8 @@ class TiendaNubeResCompanyInherit(models.Model):
                 response = requests.put(url, headers=headers, json=data)
                 if response.status_code != 200:
                     raise ValidationError('Error al actualizar stock de Tienda Nube: %s' % response.text)
+                if 'promotional_price' in data:
+                    variant._tn_mark_promo_sent()
             # Hacemos un commit y procedemos a actulizar stock por warehouse
             self.env.cr.commit()
             # Buscamos los wharehouse que tengan location_id_tn
@@ -474,23 +567,6 @@ class TiendaNubeResCompanyInherit(models.Model):
     def _tn_get_variant_promotional_price(self, variant):
         """Precio promocional para TN: None (null en el JSON) cuando no hay promo, para que TN la quite."""
         return variant.precio_promocional_tn or None
-
-    def _tn_price_from_tn_to_odoo(self, product, price):
-        """Convierte un precio que viene de TN (precio final) al price_unit de la linea de venta.
-        - not_included: comportamiento original, se quita el impuesto.
-        - included: TN manda precio final; solo se quitan los impuestos del producto que NO son
-          'incluido en el precio', para no duplicar el IVA en la orden."""
-        self.ensure_one()
-        if not price:
-            return price
-        taxes = product.taxes_id._filter_taxes_by_company(self)
-        if self.tn_type_tax == 'not_included':
-            value_tax = (((taxes.compute_all(price)['total_included']) * 100) / (taxes.compute_all(price)['total_excluded'])) / 100
-            return price / value_tax
-        taxes_to_strip = taxes.filtered(lambda t: not t.price_include)
-        if taxes_to_strip:
-            return taxes_to_strip.with_context(force_price_include=True).compute_all(price, product=product)['total_excluded']
-        return price
 
     # Dividir en lotes de hasta 40 variantes
     def _split_batches(self, products, max_variants):
@@ -546,6 +622,8 @@ class TiendaNubeResCompanyInherit(models.Model):
                 response = requests.put(url, headers=headers, json=data)
                 if response.status_code != 200:
                     raise ValidationError('Error al actualizar precio de Tienda Nube: %s' % response.text)
+                if 'promotional_price' in data:
+                    variant._tn_mark_promo_sent()
 
     def _update_product_price_tn_batch(self, products):
         """Actualiza precios usando PATCH batch (para > 5 variantes)"""
@@ -583,27 +661,49 @@ class TiendaNubeResCompanyInherit(models.Model):
         if self.update_product_tn_promotional_price:
             self._update_product_promotional_price_tn_batch(products)
 
-    def _update_product_promotional_price_tn_batch(self, products, chunk_size=50, max_retries=3):
+    def _update_product_promotional_price_tn_batch(self, products, chunk_size=50, max_retries=4):
+        """Envia la promo por producto con PATCH /products/{id}/variants (stock-price no la acepta).
+
+        Solo viajan las variantes cuya promo cambio desde el ultimo envio
+        (tn_promotional_price_sent). Asi:
+        - quien no usa la promo en Odoo no genera ningun request extra ni pisa las promos que
+          carga directamente en el admin de Tienda Nube;
+        - el cron diario de precios no hace un request por producto para todo el catalogo.
+        Un error en un producto queda en el log y no corta el resto."""
         headers = self.get_headers_tn()
         for product in products:
-            variants = product.product_variant_ids.filtered(lambda x: x.product_id_tn != False)
-            if not product.id_tn or not variants:
+            if not product.id_tn:
+                continue
+            variants = product.product_variant_ids.filtered(
+                lambda v: v.product_id_tn and v._tn_promo_pending())
+            if not variants:
                 continue
             url = "https://api.tiendanube.com/v1/%s/products/%s/variants" % (self.tiendanube_id, product.id_tn)
-            data_variants = [{
-                'id': int(variant.product_id_tn),
-                'promotional_price': self._tn_get_variant_promotional_price(variant),
-            } for variant in variants]
-            for start in range(0, len(data_variants), chunk_size):
-                chunk = data_variants[start:start + chunk_size]
+            for start in range(0, len(variants), chunk_size):
+                chunk = variants[start:start + chunk_size]
+                data_variants = [{
+                    'id': int(variant.product_id_tn),
+                    'promotional_price': self._tn_get_variant_promotional_price(variant),
+                } for variant in chunk]
                 for attempt in range(max_retries + 1):
-                    response = requests.patch(url, headers=headers, json=chunk)
+                    response = requests.patch(url, headers=headers, json=data_variants)
                     if response.status_code != 429 or attempt == max_retries:
                         break
-                    # Rate limit de TN para actualizacion de variantes: esperamos y reintentamos
+                    # Rate limit de TN: esperamos y reintentamos
                     time.sleep(2 ** attempt)
-                if response.status_code != 200:
-                    raise ValidationError('Error al actualizar precio promocional de %s en Tienda Nube: %s' % (product.display_name, response.text))
+                if response.status_code == 200:
+                    chunk._tn_mark_promo_sent()
+                else:
+                    _logger.warning('[TN] Error al actualizar precio promocional de %s: %s',
+                                    product.display_name, response.text)
+                    self.env['tn.log'].create_log(
+                        'Error al actualizar precio promocional en Tienda Nube',
+                        'Producto %s' % product.display_name,
+                        'product.template',
+                        product.id,
+                        'error',
+                        response.text,
+                    )
 
     #Actualizamos stock de productos en TN con PATCH /products/stock-price
     def update_product_stock_tn(self, products, location_id_tn):
@@ -784,6 +884,7 @@ class TiendaNubeResCompanyInherit(models.Model):
             for v in data['variants']:
                 variant = product.product_variant_ids.filtered(lambda x: x.barcode.replace(' ', '') == v['barcode'])
                 variant.product_id_tn = v['id']
+                variant._tn_mark_promo_sent()
                 # Si se contemplan imagenes por variantes, asignamos la imagen correspondiente a la variante
                 if product.contemplar_imagen_variantes_tn and 'images' in data and len(data['images']) > 0:
                     #Modificamos la imagenes de la variante en tienda nube
@@ -895,9 +996,7 @@ class TiendaNubeResCompanyInherit(models.Model):
             data = response.json()
             # Segun respuesta crearmos ordenes en nuestro modelo sale.order
             for order in data:
-                order_odoo = self.env['sale.order'].with_company(self)._tn_find_or_create(order['id'])
-                if order_odoo.state == 'draft':
-                    order_odoo.with_company(self).create_order_from_tn()
+                self.env['sale.order']._tn_import_order(order['id'], self)
         else:
             # Creamos log de TN
             self.env['tn.log'].create_log(
@@ -909,6 +1008,47 @@ class TiendaNubeResCompanyInherit(models.Model):
                 error_tn=response.text,
             )
             raise ValidationError('Error al obtener ordenes de Tienda Nube: %s' % response.text)
+
+    # Metodo para traer ordenes de Tienda Nube a Odoo filtradas por rango de fechas
+    def get_orders_by_date_tn(self, date_from, date_to):
+        headers = self.get_headers_tn()
+        date_from_str = str(date_from) + 'T00:00:00'
+        date_to_str = str(date_to) + 'T23:59:59'
+        page = 1
+        while True:
+            url = (
+                "https://api.tiendanube.com/v1/%s/orders?fields=id"
+                "&created_at_min=%s&created_at_max=%s&page=%s&per_page=200"
+            ) % (self.tiendanube_id, date_from_str, date_to_str, page)
+            response = requests.get(url, headers=headers)
+            if response.status_code == 200:
+                data = response.json()
+                if not data:
+                    break
+                for order in data:
+                    self.env['sale.order']._tn_import_order(order['id'], self)
+                if len(data) < 200:
+                    break
+                page += 1
+            elif response.status_code == 404:
+                break
+            else:
+                self.env['tn.log'].create_log(
+                    name='Error al obtener órdenes por fecha de Tienda Nube',
+                    message='Rango: %s - %s' % (date_from_str, date_to_str),
+                    model='res.company',
+                    model_id=self.id,
+                    level='error',
+                    error_tn=response.text,
+                )
+                raise ValidationError('Error al obtener órdenes de Tienda Nube: %s' % response.text)
+
+    # Metodo para el CRON: trae las ordenes de ayer y hoy. Se incluye el dia anterior para
+    # no perder las ordenes de las ultimas horas del dia cuando el cron corre pasada la
+    # medianoche (o por la diferencia horaria con UTC). Las existentes no se duplican.
+    def cron_sync_orders_today_tn(self):
+        today = fields.Date.context_today(self)
+        self.get_orders_by_date_tn(today - timedelta(days=1), today)
 
     def action_test_connection_tn(self):
         result = self.test_connection_tn()
