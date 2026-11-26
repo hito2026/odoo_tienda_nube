@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<odoo>
+    <record id="view_sale_order_tn_l10n_ar" model="ir.ui.view">
+        <field name="name">Datos fiscales del contacto en la solapa Tienda Nube</field>
+        <field name="model">sale.order</field>
+        <field name="inherit_id" ref="odoo_tienda_nube.view_sale_order_tienda_nube_inherit" />
+        <field name="arch" type="xml">
+            <xpath expr="//page[@name='tienda_nube_page']/button[@name='create_order_from_tn']" position="after">
+                <button name="action_tn_update_partner_data" type="object"
+                        string="Actualizar datos fiscales del contacto"
+                        help="Completa la responsabilidad ARCA del contacto de la orden (y la consulta al padron si tiene CUIT) sin tocar las lineas ni los precios. Sirve en ordenes ya confirmadas."
+                        invisible="not partner_id"/>
+            </xpath>
+        </field>
+    </record>
+</odoo>
