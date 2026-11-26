@@ -2,6 +2,7 @@
 
 from . import res_company_inherit
 from . import webhook_tn
+from . import product_pricelist_inherit
 from . import product_template_inherit
 from . import product_product_inherit
 from . import category_tn

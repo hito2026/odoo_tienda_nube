@@ -1,5 +1,15 @@
 # Changelog — Tienda Nube ⇆ Odoo Connector
 
+## [19.0.0.3.0] - 2026-11-26
+Port de 17.0.6.2.0 / 17.0.6.3.0.
+### Added
+- Precio promocional TN (`tn_promotional_price`) en las reglas de precio fijo de la lista de Tienda Nube, sincronizado en ambos sentidos con el precio promocional de la variante.
+### Fixed
+- El precio enviado a TN se calcula por variante: aplican las reglas por variante en plantillas con varias variantes (antes se consultaba la lista con la plantilla).
+- Modo "Incluido": el precio que manda TN se respeta y solo se quitan los impuestos que no son "incluido en el precio"; antes el IVA no price_include se sumaba encima y duplicaba el IVA en la orden.
+- El batch de precios envía la promo (PATCH /products/{id}/variants) solo para las variantes cuya promo cambió (`tn_promotional_price_sent`), y la ruta individual respeta "Actualizar Precio Promocional".
+- El grupo "Tienda Nube" lo tienen los administradores y, al actualizar, los gerentes de ventas (antes el menú quedaba oculto para todos).
+
 ## [19.0.0.1.3] - 2026-09-29
 ### Fixed
 - La importacion de ordenes (por fecha, todas y cron) procesa cada orden en su propia transaccion: un error en una orden queda en el log y no corta ni deshace las demas.

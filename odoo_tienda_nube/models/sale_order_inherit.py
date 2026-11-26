@@ -100,20 +100,31 @@ class SaleOrderTiendaNubeInherit(models.Model):
         forced = self.company_id.tn_force_tax_ids
         if forced:
             return forced
-        return product.taxes_id
+        return product.taxes_id._filter_taxes_by_company(self.company_id)
 
-    def _tn_price_unit_without_taxes(self, price_unit, taxes):
-        """Tienda Nube manda el precio con impuestos incluidos. Cuando la compañia esta
-        configurada como 'No incluido' hay que desarmarlo, y hay que hacerlo con los
-        impuestos que la linea va a llevar en Odoo: si se fuerza un IVA distinto al del
-        producto, desarmar con el del producto daria un neto equivocado."""
+    def _tn_price_unit_without_taxes(self, price_unit, taxes, product=None):
+        """Lleva el precio que manda Tienda Nube (siempre precio final, con impuestos) al
+        price_unit de la linea, usando los impuestos que la linea va a llevar en Odoo (si se
+        fuerza un IVA distinto al del producto, desarmar con el del producto daria un neto
+        equivocado).
+
+        - 'No incluido': se quitan todos los impuestos.
+        - 'Incluido': el precio final se respeta; solo se quitan los impuestos que NO son
+          'incluido en el precio', porque Odoo los sumaria encima y duplicaria el IVA. Si los
+          impuestos son price_include el precio queda igual."""
         self.ensure_one()
-        if self.company_id.tn_type_tax != 'not_included' or not price_unit or not taxes:
+        if not price_unit or not taxes:
             return price_unit
-        totals = taxes.compute_all(price_unit)
-        if not totals['total_included']:
+        if self.company_id.tn_type_tax == 'not_included':
+            totals = taxes.compute_all(price_unit, product=product)
+            if not totals['total_included']:
+                return price_unit
+            return price_unit * totals['total_excluded'] / totals['total_included']
+        taxes_to_strip = taxes.filtered(lambda t: not t.price_include)
+        if not taxes_to_strip:
             return price_unit
-        return price_unit * totals['total_excluded'] / totals['total_included']
+        return taxes_to_strip.with_context(force_price_include=True).compute_all(
+            price_unit, product=product)['total_excluded']
 
     def _tn_apply_forced_taxes(self, order_line):
         """Reemplaza en la linea los impuestos que aporto el producto por los configurados
@@ -504,7 +515,8 @@ class SaleOrderTiendaNubeInherit(models.Model):
                         missing_lines.append("'%s' (TN id: %s)" % (line['name'], line['variant_id']))
                         continue
                     #Verificamos si tenemos que quitar impuestos
-                    price_unit = self._tn_price_unit_without_taxes(float(line['price']), self._tn_effective_taxes(product))
+                    price_unit = self._tn_price_unit_without_taxes(
+                        float(line['price']), self._tn_effective_taxes(product), product)
                     order_line = self.env['sale.order.line'].create({
                         'name': line['name'],
                         'order_id': self.id,
@@ -563,7 +575,7 @@ class SaleOrderTiendaNubeInherit(models.Model):
                             })
                         self.coupon_tn_ids = [(4, coupon_tn.id)]
                         discount_coupon_amount = self._tn_price_unit_without_taxes(
-                            float(order['discount_coupon']), self._tn_effective_taxes(product_discount_tn))
+                            float(order['discount_coupon']), self._tn_effective_taxes(product_discount_tn), product_discount_tn)
                         order_line = self.env['sale.order.line'].create({
                             'name': 'Descuento por cupón (' + coupon['code'] + ')',
                             'order_id': self.id,
@@ -579,7 +591,7 @@ class SaleOrderTiendaNubeInherit(models.Model):
                         else:
                             self.promotions_applied_tn = "Tipo: " + promotions_applied['discount_script_type'] + " - Descuento: " + promotions_applied['total_discount_amount_short'] + "\n"
                         discount_promo_amount = self._tn_price_unit_without_taxes(
-                            float(promotions_applied['total_discount_amount']), self._tn_effective_taxes(product_discount_tn))
+                            float(promotions_applied['total_discount_amount']), self._tn_effective_taxes(product_discount_tn), product_discount_tn)
                         order_line = self.env['sale.order.line'].create({
                             'name': 'Promoción ' + promotions_applied['discount_script_type'],
                             'order_id': self.id,
@@ -594,7 +606,7 @@ class SaleOrderTiendaNubeInherit(models.Model):
                         gateway_name = order.get('gateway_name') or order.get('gateway') or 'Medio de pago'
                         self.discount_gateway_tn = gateway_name + ': $' + order['discount_gateway']
                         discount_gateway_amount = self._tn_price_unit_without_taxes(
-                            float(order['discount_gateway']), self._tn_effective_taxes(product_discount_tn))
+                            float(order['discount_gateway']), self._tn_effective_taxes(product_discount_tn), product_discount_tn)
                         order_line = self.env['sale.order.line'].create({
                             'name': 'Descuento por medio de pago (' + gateway_name + ')',
                             'order_id': self.id,
@@ -611,7 +623,7 @@ class SaleOrderTiendaNubeInherit(models.Model):
                 
                 #Verificamos si tenemos que quitar impuestos
                 price_shipping = self._tn_price_unit_without_taxes(
-                    float(order['shipping_cost_customer']), self._tn_effective_taxes(product_shipping_tn))
+                    float(order['shipping_cost_customer']), self._tn_effective_taxes(product_shipping_tn), product_shipping_tn)
 
                 order_line = self.env['sale.order.line'].create({
                     'name': 'Costo de Envío (' + order['shipping_option'] + ')',
