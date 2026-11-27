@@ -6,6 +6,10 @@ from .product_pricelist_inherit import TN_SKIP_PROMO_SYNC
 
 _logger = logging.getLogger(__name__)
 
+# Contexto para no volver a copiar Inventario -> TN cuando las medidas vienen de Tienda Nube
+TN_SKIP_DIMENSION_COPY = 'tn_skip_dimension_copy'
+TN_DIMENSION_FIELDS = ('peso_tn', 'profundidad_tn', 'ancho_tn', 'alto_tn')
+
 class TiendaNubeProductProductInherit(models.Model):
     _inherit = "product.product"
 
@@ -43,7 +47,9 @@ class TiendaNubeProductProductInherit(models.Model):
         res = super().write(vals)
         if 'precio_promocional_tn' in vals and not self.env.context.get(TN_SKIP_PROMO_SYNC):
             self._tn_sync_promo_to_pricelist()
-        if set(vals) & set(self._tn_inventory_dimension_trigger_fields()) and self._tn_dimensions_from_inventory_enabled():
+        if (set(vals) & set(self._tn_inventory_dimension_trigger_fields())
+                and not self.env.context.get(TN_SKIP_DIMENSION_COPY)
+                and self._tn_dimensions_from_inventory_enabled()):
             self._tn_copy_inventory_dimensions()
         return res
 
@@ -94,6 +100,44 @@ class TiendaNubeProductProductInherit(models.Model):
                 super(TiendaNubeProductProductInherit, variant.sudo()).write(vals)
                 updated += 1
         return updated
+
+    # ------------------------------------------------------------------
+    # Medidas de Tienda Nube -> Odoo
+    # ------------------------------------------------------------------
+    def _tn_inventory_vals_from_tn(self, dims, fill_inventory=False, fix_uom=False):
+        """Valores de Inventario a escribir a partir de las medidas de TN (kg / cm).
+        Devuelve (vals, acciones) donde acciones es un set de {'inventory_filled', 'uom_fixed'}.
+        El conector solo maneja el peso; los modulos puente agregan largo/ancho/alto."""
+        self.ensure_one()
+        vals, actions = {}, set()
+        if fill_inventory and not self.weight and dims.get('peso_tn', 0) > 0:
+            weight_uom = self.product_tmpl_id._get_weight_uom_id_from_ir_config_parameter()
+            kg = self.env.ref('uom.product_uom_kgm', raise_if_not_found=False)
+            weight = dims['peso_tn']
+            if kg and weight_uom and weight_uom != kg:
+                weight = kg._compute_quantity(weight, weight_uom, round=False)
+            vals['weight'] = weight
+            actions.add('inventory_filled')
+        return vals, actions
+
+    def _tn_apply_tn_dimensions(self, dims, fill_inventory=False, fix_uom=False):
+        """Aplica las medidas traidas de TN. dims: {peso_tn, profundidad_tn, ancho_tn, alto_tn}.
+        Solo se usan valores > 0. Devuelve el set de acciones realizadas."""
+        self.ensure_one()
+        actions = set()
+        product = self.sudo().with_context(**{TN_SKIP_DIMENSION_COPY: True})
+        inv_vals, inv_actions = self._tn_inventory_vals_from_tn(dims, fill_inventory=fill_inventory, fix_uom=fix_uom)
+        if inv_vals:
+            product.write(inv_vals)
+            actions |= inv_actions
+        tn_vals = {
+            fname: dims[fname] for fname in TN_DIMENSION_FIELDS
+            if dims.get(fname, 0) > 0 and float_compare(dims[fname], self[fname] or 0.0, precision_digits=3) != 0
+        }
+        if tn_vals:
+            product.write(tn_vals)
+            actions.add('tn_updated')
+        return actions
 
     def action_tn_copy_inventory_dimensions(self):
         updated = self._tn_copy_inventory_dimensions()

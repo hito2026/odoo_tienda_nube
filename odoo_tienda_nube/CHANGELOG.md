@@ -1,5 +1,9 @@
 # Changelog — Tienda Nube ⇆ Odoo Connector
 
+## [17.0.6.5.0] - 2026-11-27
+### Added
+- Asistente "Traer medidas desde Tienda Nube": guarda en Odoo el peso y las medidas de TN (sin enviar nada a TN), con opción de completar la pestaña Inventario vacía y de corregir la unidad a cm cuando los números coinciden con TN. Incluye simulación.
+
 ## [17.0.6.4.0] - 2026-11-26
 ### Added
 - Umbral porcentual de stock (`tn_stock_threshold_percent`): se publica en TN el stock calculado según la configuración menos ese porcentaje, redondeado hacia abajo a entero.

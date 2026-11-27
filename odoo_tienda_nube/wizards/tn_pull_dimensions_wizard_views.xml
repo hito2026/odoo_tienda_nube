@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_tn_pull_dimensions_wizard_form" model="ir.ui.view">
+        <field name="name">tn.pull.dimensions.wizard.form</field>
+        <field name="model">tn.pull.dimensions.wizard</field>
+        <field name="arch" type="xml">
+            <form string="Traer medidas desde Tienda Nube">
+                <p class="text-muted">
+                    Lee el peso y las medidas de cada variante en Tienda Nube y los guarda en Odoo, en los campos de
+                    Tienda Nube de las variantes vinculadas. No envía nada a Tienda Nube. Solo se usan los valores
+                    mayores a 0. Usá "Simular" para ver cuántas variantes cambiarían antes de aplicar.
+                </p>
+                <group>
+                    <group>
+                        <field name="company_id" options="{'no_create': True}" groups="base.group_multi_company"/>
+                        <field name="fill_inventory"/>
+                        <field name="fix_uom"/>
+                    </group>
+                    <group invisible="state == 'draft'">
+                        <field name="state" readonly="1"/>
+                        <field name="tn_variant_count"/>
+                        <field name="tn_updated_count"/>
+                        <field name="inventory_filled_count"/>
+                        <field name="uom_fixed_count"/>
+                        <field name="without_tn_data_count"/>
+                    </group>
+                </group>
+                <footer>
+                    <button name="action_simulate" string="Simular" type="object" class="btn-secondary"/>
+                    <button name="action_apply" string="Aplicar" type="object" class="btn-primary"
+                            confirm="Se guardan en Odoo las medidas de Tienda Nube según las opciones elegidas. ¿Continuar?"/>
+                    <button string="Cerrar" class="btn-secondary" special="cancel"/>
+                </footer>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_tn_pull_dimensions_wizard" model="ir.actions.act_window">
+        <field name="name">Traer medidas desde Tienda Nube</field>
+        <field name="res_model">tn.pull.dimensions.wizard</field>
+        <field name="view_mode">form</field>
+        <field name="target">new</field>
+    </record>
+
+    <menuitem id="menu_tn_pull_dimensions_wizard" name="Traer medidas desde Tienda Nube"
+              parent="menu_settings_tn" action="action_tn_pull_dimensions_wizard"/>
+</odoo>

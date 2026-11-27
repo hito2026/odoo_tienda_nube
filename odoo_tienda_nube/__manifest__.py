@@ -4,7 +4,7 @@
     "summary": """
         Conector de Tienda Nube con Odoo""",
     "category": "Sale",
-    "version": "17.0.6.4.0",
+    "version": "17.0.6.5.0",
     "website": "https://devoo.io",
     "author": "Iván Arriola | Valentin Romero - Devoo",
     "license": "LGPL-3",
@@ -37,6 +37,7 @@
         "views/res_company_inherit_view.xml",
         "views/menu_view.xml",
         "wizards/tn_unmatched_variants_wizard_views.xml",
+        "wizards/tn_pull_dimensions_wizard_views.xml",
         "views/product_template_inherit_view.xml",
         "views/product_product_inherit_view.xml",
         "views/product_pricelist_inherit_view.xml",
